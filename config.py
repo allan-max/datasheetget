@@ -4,7 +4,8 @@ import re
 # ==============================================================================
 # 📋 LISTA DE SITES SUPORTADOS
 # ==============================================================================
-
+  
+  
 SITES_CONFIG = {
     'MERCADO_LIVRE': {
         'padroes_url': [r'mercadolivre\.com', r'produto\.mercadolivre'],
