@@ -99,6 +99,9 @@ class BaseScraper:
     def gerar_arquivos_finais(self, dados):
         if not self.output_folder: raise Exception("Pasta de saída indefinida")
 
+        if 'titulo' in dados and dados['titulo']:
+            dados['titulo'] = str(dados['titulo']).upper()
+
         safe_title = re.sub(r'(?u)[^-\w.]', '', dados['titulo'].replace(' ', '_'))[:60]
         timestamp = datetime.now().strftime("%H%M%S")
         
