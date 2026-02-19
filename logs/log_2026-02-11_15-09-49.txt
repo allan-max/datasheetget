@@ -1,0 +1,81 @@
+📝 Log desta sessão iniciado em: C:\Users\Administrator\Desktop\datasheetget\logs\log_2026-02-11_15-09-49.txt
+📁 ARQUIVOS SERÃO SALVOS EM: \\SERVIDOR2\Publico\Datasheet
+============================================================
+ Robô Iniciado | Porta 
+ Modo Multi-Thread Ativado
+============================================================
+ * Serving Flask app 'api'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:6004
+ * Running on http://192.168.1.3:6004
+Press CTRL+C to quit
+
+🔧 [PROCESSANDO] UUID Interno: 1cd6064e-11e4-46e0-8900-e709ac80adb6127.0.0.1 - - [11/Feb/2026 15:10:19] "POST /api/datasheet/processar HTTP/1.1" 202 -
+
+   📅 Data: 11/02/2026 15:10:19
+   --> Iniciando scraper: AGIS
+   [Agis] Acessando: https://vendas.agis.com.br/toner-brother-preto-12k-tn3472sbr
+   ✅ Sucesso! Preparando webhook...
+   📤 Enviando para Webhook: http://127.0.0.1:3000/api/datasheet/webhook
+   ⏱️ Tempo de Execução: 2.24 segundos
+------------------------------------------------------------
+
+🔧 [PROCESSANDO] UUID Interno: c95eb83e-ecd5-4e0e-9d8b-9dbc1f99a85e127.0.0.1 - - [11/Feb/2026 15:29:59] "POST /api/datasheet/processar HTTP/1.1" 202 -
+
+   📅 Data: 11/02/2026 15:29:59
+   --> Iniciando scraper: MERCADO_LIVRE
+   [ML] Acessando: https://produto.mercadolivre.com.br/MLB-5947806698-organizador-4-gavetas-gavea-com-rodizios-e-chave-_JM?matt_tool=29851250&matt_internal_campaign_id=&matt_word=&matt_source=google&matt_campaign_id=22090354004&matt_ad_group_id=173090513436&matt_match_type=&matt_network=g&matt_device=c&matt_creative=727882725507&matt_keyword=&matt_ad_position=&matt_ad_type=pla&matt_merchant_id=280551367&matt_product_id=MLB5947806698&matt_product_partition_id=2387641942046&matt_target_id=pla-2387641942046&cq_src=google_ads&cq_cmp=22090354004&cq_net=g&cq_plt=gp&cq_med=pla&gad_source=1&gad_campaignid=22090354004&gbraid=0AAAAAD93qcBvuEgdnyro6_QEOKrlNaeSm&gclid=EAIaIQobChMI0M3K5IjSkgMVdXBIAB0DjBIBEAQYAyABEgKZ9fD_BwE
+   ✅ Sucesso! Preparando webhook...
+   📤 Enviando para Webhook: http://127.0.0.1:3000/api/datasheet/webhook
+   ⏱️ Tempo de Execução: 3.33 segundos
+------------------------------------------------------------
+
+🔧 [PROCESSANDO] UUID Interno: c1d811ae-6ec9-4e49-9386-749e79ebecfc127.0.0.1 - - [11/Feb/2026 15:30:12] "POST /api/datasheet/processar HTTP/1.1" 202 -
+
+   📅 Data: 11/02/2026 15:30:12
+   --> Iniciando scraper: TAMBASA
+   [Tambasa] Iniciando Scraper...
+   ✅ Sucesso! Preparando webhook...
+   📤 Enviando para Webhook: http://127.0.0.1:3000/api/datasheet/webhook
+   ⏱️ Tempo de Execução: 10.68 segundos
+------------------------------------------------------------
+
+🔧 [PROCESSANDO] UUID Interno: 6bfb4d27-4135-4d65-875d-ccebff657829127.0.0.1 - - [11/Feb/2026 15:30:39] "POST /api/datasheet/processar HTTP/1.1" 202 -
+
+   📅 Data: 11/02/2026 15:30:39
+   --> Iniciando scraper: TAMBASA
+   [Tambasa] Iniciando Scraper...
+   ✅ Sucesso! Preparando webhook...
+   📤 Enviando para Webhook: http://127.0.0.1:3000/api/datasheet/webhook
+   ⏱️ Tempo de Execução: 9.87 segundos
+------------------------------------------------------------
+
+🔧 [PROCESSANDO] UUID Interno: f8d47ac7-f28d-4a38-9d72-92794a740b7b127.0.0.1 - - [11/Feb/2026 15:31:17] "POST /api/datasheet/processar HTTP/1.1" 202 -
+
+   📅 Data: 11/02/2026 15:31:17
+DEBUG PATH: ['C:\\Users\\Administrator\\Desktop\\datasheetget', 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python313\\python313.zip', 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python313\\DLLs', 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python313\\Lib', 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python313', 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages']
+   ❌ Falha: Erro de Importação: No module named 'distutils'. Verifique se 'scrapers/bhphotovideo.py' existe e se tem __init__.py na pasta.
+   📤 Enviando para Webhook: http://127.0.0.1:3000/api/datasheet/webhook
+   ⏱️ Tempo de Execução: 0.45 segundos
+------------------------------------------------------------
+127.0.0.1 - - [11/Feb/2026 15:51:48] "POST /api/datasheet/processar HTTP/1.1" 202 -
+
+🔧 [PROCESSANDO] UUID Interno: e59ef15c-0e6e-4153-a41f-51229c8980e8
+   📅 Data: 11/02/2026 15:51:48
+   --> Iniciando scraper: KALUNGA
+   [Kalunga] Iniciando Scraper (V7 - Divisão por Texto)...
+   ✅ Sucesso! Preparando webhook...
+   📤 Enviando para Webhook: http://127.0.0.1:3000/api/datasheet/webhook
+   ⏱️ Tempo de Execução: 1.29 segundos
+------------------------------------------------------------
+
+🔧 [PROCESSANDO] UUID Interno: f67e560c-77ee-4403-a320-16b5fa4219c9127.0.0.1 - - [11/Feb/2026 16:06:32] "POST /api/datasheet/processar HTTP/1.1" 202 -
+
+   📅 Data: 11/02/2026 16:06:32
+DEBUG PATH: ['C:\\Users\\Administrator\\Desktop\\datasheetget', 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python313\\python313.zip', 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python313\\DLLs', 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python313\\Lib', 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python313', 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages']
+   ❌ Falha: Erro de Importação: No module named 'distutils'. Verifique se 'scrapers/intelbras.py' existe e se tem __init__.py na pasta.
+   📤 Enviando para Webhook: http://127.0.0.1:3000/api/datasheet/webhook
+   ⏱️ Tempo de Execução: 0.29 segundos
+------------------------------------------------------------
