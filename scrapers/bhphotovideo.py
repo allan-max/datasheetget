@@ -14,19 +14,17 @@ class BhPhotoVideoScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [B&H] Iniciando Scraper (V28 - Headless & Win2012 Fix)...")
+            print(f"   [B&H] Iniciando Scraper (V29 - No Specs Translation)...")
             
             # --- SETUP ---
             if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
             if not os.path.exists(self.pasta_saida): os.makedirs(self.pasta_saida)
 
             options = uc.ChromeOptions()
-            
-            # --- CORREÇÕES APLICADAS AQUI ---
-            options.add_argument("--headless=new") # Modo invisível
-            options.add_argument("--window-size=1920,1080") # Evita quebras de layout
+            options.add_argument("--headless=new") 
+            options.add_argument("--window-size=1920,1080")
             options.add_argument("--no-first-run")
-            options.add_argument("--no-default-browser-check") # Pula a tela de boas-vindas
+            options.add_argument("--no-default-browser-check")
             options.add_argument("--password-store=basic")
             options.add_argument("--disable-http2")
             options.page_load_strategy = 'eager'
@@ -122,6 +120,7 @@ class BhPhotoVideoScraper(BaseScraper):
                 if div_d: descricao_en = div_d.get_text(separator="\n\n", strip=True)
 
             print("   [B&H] Traduzindo descrição...")
+            # Apenas a descrição continua sendo traduzida
             descricao_pt = self.traduzir_texto(descricao_en)
 
             # =========================================================
@@ -202,28 +201,9 @@ class BhPhotoVideoScraper(BaseScraper):
                         except: pass
                 except: pass
 
-            # --- TRADUÇÃO EM LOTE ---
-            specs_final = {}
-            if specs:
-                print(f"   [B&H] Traduzindo {len(specs)} itens em lote...")
-                try:
-                    chaves_en = list(specs.keys())
-                    valores_en = list(specs.values())
-                    
-                    try:
-                        translator = GoogleTranslator(source='en', target='pt')
-                        chaves_pt = translator.translate_batch(chaves_en)
-                        valores_pt = translator.translate_batch(valores_en)
-                        specs_final = dict(zip(chaves_pt, valores_pt))
-                    except:
-                        print("   ⚠️ Batch falhou, tentando linear...")
-                        for k, v in specs.items():
-                            specs_final[self.traduzir_texto(k)] = self.traduzir_texto(v)
-                except Exception as e:
-                    print(f"   ⚠️ Erro tradução: {e}. Mantendo inglês.")
-                    specs_final = specs
-            
-            print(f"   ✅ Specs prontas: {len(specs_final)} itens.")
+            # A TRADUÇÃO DE SPECS FOI REMOVIDA DAQUI
+            specs_final = specs
+            print(f"   ✅ Specs prontas (sem tradução): {len(specs_final)} itens.")
 
             # --- FINALIZAÇÃO ---
             dados = {
