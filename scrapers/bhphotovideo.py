@@ -14,19 +14,25 @@ class BhPhotoVideoScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [B&H] Iniciando Scraper (V27 - Reliable Speed)...")
+            print(f"   [B&H] Iniciando Scraper (V28 - Headless & Win2012 Fix)...")
             
             # --- SETUP ---
             if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
             if not os.path.exists(self.pasta_saida): os.makedirs(self.pasta_saida)
 
             options = uc.ChromeOptions()
-            options.page_load_strategy = 'eager'
+            
+            # --- CORREÇÕES APLICADAS AQUI ---
+            options.add_argument("--headless=new") # Modo invisível
+            options.add_argument("--window-size=1920,1080") # Evita quebras de layout
             options.add_argument("--no-first-run")
+            options.add_argument("--no-default-browser-check") # Pula a tela de boas-vindas
             options.add_argument("--password-store=basic")
             options.add_argument("--disable-http2")
+            options.page_load_strategy = 'eager'
             
-            driver = uc.Chrome(options=options, version_main=144)
+            # CRÍTICO: Versão 109 para rodar no Windows Server 2012 R2
+            driver = uc.Chrome(options=options, version_main=109)
             
             # =========================================================
             # ETAPA 1: PÁGINA PRINCIPAL
@@ -87,7 +93,7 @@ class BhPhotoVideoScraper(BaseScraper):
                 except: driver.execute_script("window.stop();")
 
             driver.execute_script("window.scrollTo(0, 600);")
-            time.sleep(1) # Dá um tempinho a mais pro texto carregar
+            time.sleep(1) 
 
             soup_ov = BeautifulSoup(driver.page_source, 'html.parser')
             descricao_en = ""
@@ -134,7 +140,6 @@ class BhPhotoVideoScraper(BaseScraper):
                             print("   [B&H] Clicando na aba Specs...")
                             driver.execute_script("arguments[0].click();", aba)
                             
-                            # ESPERA INTELIGENTE PELA TABELA
                             try:
                                 WebDriverWait(driver, 4).until(
                                     EC.presence_of_element_located((By.CSS_SELECTOR, "table[data-selenium='specsItemGroupTable']"))
@@ -148,11 +153,10 @@ class BhPhotoVideoScraper(BaseScraper):
             if not tabela_detectada:
                 print("   [B&H] Navegando direto para Specs (Timeout 6s)...")
                 url_specs = self.url.split("?")[0].rstrip("/") + "/specs"
-                driver.set_page_load_timeout(6) # Aumentado de 2s para 6s
+                driver.set_page_load_timeout(6) 
                 try: 
                     driver.get(url_specs)
                 except: 
-                    # Corta scripts extras, mas o HTML principal já deve ter vindo
                     driver.execute_script("window.stop();")
             
             # --- PARSE ---
@@ -174,7 +178,7 @@ class BhPhotoVideoScraper(BaseScraper):
                                 if not any(ig in k.lower() for ig in ["packaging", "box dim", "peso da emb"]):
                                     specs[k] = v
             
-            # 2. Extração Oculta (JSON-LD) - Salva vidas quando a tabela falha
+            # 2. Extração Oculta (JSON-LD)
             if not specs:
                 print("   ⚠️ Tabelas vazias. Buscando dados ocultos (JSON-LD)...")
                 try:
@@ -186,7 +190,6 @@ class BhPhotoVideoScraper(BaseScraper):
                                 data = json.loads(txt)
                                 if isinstance(data, list): data = data[0]
                                 
-                                # Mapeia campos comuns
                                 if "width" in data: specs["Largura"] = str(data["width"])
                                 if "height" in data: specs["Altura"] = str(data["height"])
                                 if "depth" in data: specs["Profundidade"] = str(data["depth"])
@@ -213,7 +216,6 @@ class BhPhotoVideoScraper(BaseScraper):
                         valores_pt = translator.translate_batch(valores_en)
                         specs_final = dict(zip(chaves_pt, valores_pt))
                     except:
-                        # Fallback se batch falhar: tenta um por um rapidinho
                         print("   ⚠️ Batch falhou, tentando linear...")
                         for k, v in specs.items():
                             specs_final[self.traduzir_texto(k)] = self.traduzir_texto(v)
