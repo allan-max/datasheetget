@@ -13,7 +13,7 @@ class FrigelarScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Frigelar] Iniciando Scraper...")
+            print(f"   [Frigelar] Iniciando Scraper (Sem Ficha Técnica)...")
             
             # --- Configuração Selenium ---
             opts = Options()
@@ -35,18 +35,11 @@ class FrigelarScraper(BaseScraper):
             except:
                 print("   [Frigelar] Aviso: Timeout esperando título.")
 
-            # 2. Scroll para baixo (Essencial para carregar Descrição e Specs que usam Lazy Load)
+            # 2. Scroll para baixo (Essencial para carregar Descrição que usa Lazy Load)
             driver.execute_script("window.scrollTo(0, 600);")
             time.sleep(1)
             driver.execute_script("window.scrollTo(0, 1200);")
             time.sleep(2)
-            
-            # Tenta encontrar a Ficha Técnica para garantir que carregou
-            try:
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.ID, "fichaTecnica"))
-                )
-            except: pass
 
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
@@ -92,34 +85,9 @@ class FrigelarScraper(BaseScraper):
 
             descricao = self.limpar_descricao_cirurgica(descricao_bruta)
 
-            # --- 4. FICHA TÉCNICA ---
-            specs = {}
-            # ID: fichaTecnica -> Table class: props-table
-            div_specs = soup.find("div", id="fichaTecnica")
-            if div_specs:
-                table = div_specs.find("table", class_="props-table")
-                if table:
-                    rows = table.find_all("tr")
-                    for row in rows:
-                        cols = row.find_all("td")
-                        if len(cols) >= 2:
-                            k = self.limpar_texto(cols[0].get_text())
-                            v = self.limpar_texto(cols[1].get_text())
-                            if k and v:
-                                specs[k] = v
-            
-            # Se não achou pelo ID, tenta procurar tabela genérica
-            if not specs:
-                for table in soup.find_all("table"):
-                    if len(table.find_all("tr")) > 3:
-                        for row in table.find_all("tr"):
-                            cols = row.find_all("td")
-                            if len(cols) >= 2:
-                                specs[self.limpar_texto(cols[0].get_text())] = self.limpar_texto(cols[1].get_text())
-                        break
-
-            # Filtros finais
-            specs = self.filtrar_specs_frigelar(specs)
+            # --- 4. FICHA TÉCNICA (REMOVIDA) ---
+            specs = {} # Passa um dicionário vazio para não quebrar a geração do arquivo
+            print("   [Frigelar] Especificações técnicas ignoradas conforme solicitado.")
 
             dados = {
                 "titulo": titulo,
@@ -181,25 +149,3 @@ class FrigelarScraper(BaseScraper):
                 frases_aprovadas.append(frase)
 
         return "\n\n".join(frases_aprovadas)
-
-    def filtrar_specs_frigelar(self, specs):
-        """Filtra campos internos da Frigelar que não interessam ao cliente final"""
-        specs_limpas = {}
-        # Lista de chaves para IGNORAR (baseado no HTML enviado)
-        ignorar = [
-            "código frigelar", "esconder produto", "garantia", 
-            "fabricante", # Geralmente já está no título
-            "quantidade de btus", # Redundante se tiver "capacidade"
-            "wi-fi integrado" # Se for Não, as vezes o cliente prefere omitir
-        ]
-        
-        for k, v in specs.items():
-            k_lower = k.lower()
-            
-            # Filtro específico: Se o valor for "Não" para Wi-Fi ou Aquecimento, 
-            # as vezes é melhor não exibir para não destacar o negativo.
-            # (Opcional, mantive apenas o filtro de chaves proibidas)
-            
-            if not any(x in k_lower for x in ignorar):
-                specs_limpas[k] = v
-        return specs_limpas

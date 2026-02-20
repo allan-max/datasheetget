@@ -1,6 +1,5 @@
 # scrapers/magalu.py
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -8,33 +7,43 @@ from bs4 import BeautifulSoup, Comment
 import time
 import json
 import re
+import os
 from .base import BaseScraper
 
 class MagaluScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Magalu] Iniciando Scraper (V6 - Bloqueio Total de Tabelas Financeiras)...")
+            print(f"   [Magalu] Iniciando Scraper (V7 - Title Fix & Win2012 Ready)...")
             
-            opts = Options()
-            opts.add_argument("--headless=new") 
-            opts.add_argument("--no-sandbox")
-            opts.add_argument("--disable-dev-shm-usage")
-            opts.add_argument("--window-size=1920,1080")
-            opts.add_argument('--ignore-certificate-errors')
-            opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+            # --- SETUP (Padronizado para Win Server 2012 R2) ---
+            if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
+            if not os.path.exists(self.pasta_saida): os.makedirs(self.pasta_saida)
 
-            driver = webdriver.Chrome(options=opts)
+            options = uc.ChromeOptions()
+            options.add_argument("--headless=new") 
+            options.add_argument("--window-size=1920,1080")
+            options.add_argument("--no-first-run")
+            options.add_argument("--password-store=basic")
+            options.add_argument("--disable-http2")
+            options.page_load_strategy = 'eager'
+
+            # CRÍTICO: Versão 109 para rodar no Windows Server 2012 R2
+            driver = uc.Chrome(options=options, version_main=109)
+            
+            # 1. ACESSO
+            print(f"   [Magalu] Acessando: {self.url}")
+            driver.set_page_load_timeout(30)
             driver.get(self.url)
 
-            # 1. Aguarda carregamento
+            # Aguarda o elemento de Título específico do Magalu
             try:
                 WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "h1"))
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "h1[data-testid='heading']"))
                 )
             except: pass
 
-            # 2. Scroll para carregar conteúdo
+            # 2. Scroll para carregar conteúdo (Lazy Load)
             driver.execute_script("window.scrollTo(0, 800);")
             time.sleep(1)
             driver.execute_script("window.scrollTo(0, 1500);")
@@ -53,10 +62,32 @@ class MagaluScraper(BaseScraper):
 
             # --- TÍTULO ---
             titulo = "Produto Magalu"
-            h1 = soup.find("h1")
-            if h1: titulo = self.limpar_texto(h1.get_text())
+            
+            # 1. Tenta pela tag exata que você mandou
+            h1 = soup.find("h1", attrs={"data-testid": "heading"})
+            if not h1:
+                # Fallback para o primeiro h1 genérico
+                h1 = soup.find("h1")
+                
+            if h1: 
+                titulo = self.limpar_texto(h1.get_text())
 
-            # --- IMAGEM (OG:IMAGE) ---
+            # 2. Plano B (JSON-LD) se o título visual falhar ou vier vazio
+            if titulo == "Produto Magalu" or len(titulo) < 5:
+                scripts = soup.find_all("script", type="application/ld+json")
+                for script in scripts:
+                    try:
+                        data = json.loads(script.string)
+                        if isinstance(data, dict) and data.get("@type") == "Product":
+                            nome_json = data.get("name")
+                            if nome_json:
+                                titulo = self.limpar_texto(nome_json)
+                                break
+                    except: pass
+                    
+            print(f"   [DEBUG] Título capturado: {titulo}")
+
+            # --- IMAGEM (OG:IMAGE ou JSON) ---
             url_img = None
             meta_img = soup.find("meta", property="og:image")
             if meta_img: url_img = meta_img["content"]
@@ -76,7 +107,6 @@ class MagaluScraper(BaseScraper):
             # --- DESCRIÇÃO ---
             descricao_bruta = ""
             
-            # Identifica container
             container_desc = soup.find("div", attrs={"data-testid": "product-description"})
             if not container_desc:
                 for header in soup.find_all(["h2", "h3"]):
@@ -85,21 +115,19 @@ class MagaluScraper(BaseScraper):
                         break
             
             if container_desc:
-                # DESTRUIDOR DE ELEMENTOS FINANCEIROS NO HTML
-                # Remove qualquer tabela ou lista que contenha "x de" ou "juros"
+                # Remove tabelas/listas financeiras da descrição
                 elementos_financeiros = container_desc.find_all(['table', 'ul', 'ol', 'div', 'p'])
                 regex_fin = re.compile(r'(R\$\s*\d)|(\d{1,2}x\s*de)|(sem\s*juros)', re.IGNORECASE)
 
                 for elem in elementos_financeiros:
                     txt = elem.get_text()
-                    # Se tiver mais de 1 ocorrência de preço no mesmo bloco, deleta o bloco
                     if len(re.findall(regex_fin, txt)) >= 1:
-                         # Verifica se não é a descrição principal inteira (evita deletar tudo)
                          if len(txt) < 500: 
                              elem.decompose()
 
                 descricao_bruta = container_desc.get_text(separator="\n")
             
+            # Fallback Descrição (JSON-LD)
             if not descricao_bruta:
                 scripts = soup.find_all("script", type="application/ld+json")
                 for script in scripts:
@@ -109,10 +137,9 @@ class MagaluScraper(BaseScraper):
                             descricao_bruta = data.get("description", "")
                     except: pass
 
-            # Limpeza de Texto Final
             descricao = self.limpar_descricao_sem_precos(descricao_bruta)
 
-            # --- FICHA TÉCNICA (O PULO DO GATO) ---
+            # --- FICHA TÉCNICA ---
             specs = {}
             tables = soup.find_all("table")
             
@@ -124,11 +151,8 @@ class MagaluScraper(BaseScraper):
                         k = self.limpar_texto(cols[0].get_text())
                         v = self.limpar_texto(cols[1].get_text())
                         
-                        # --- FILTRO DE SEGURANÇA NA TABELA ---
-                        # Se a chave ou o valor parecerem dinheiro, PULA essa linha
                         if self.e_texto_financeiro(k) or self.e_texto_financeiro(v):
                             continue
-                        # -------------------------------------
 
                         if k and v: specs[k] = v
             
@@ -146,10 +170,12 @@ class MagaluScraper(BaseScraper):
 
             # Filtros Finais
             specs_limpas = {}
-            ignorar = ["garantia", "sac", "código", "vendido por", "entregue por", "ver mais", "parcelas", "juros"]
+            ignorar = ["garantia", "sac", "código", "vendido por", "entregue por", "ver mais", "parcelas", "juros", "meses"]
             for k, v in specs.items():
                 if not any(x in k.lower() for x in ignorar):
                     specs_limpas[k] = v
+
+            print(f"   ✅ Specs encontradas: {len(specs_limpas)} itens.")
 
             dados = {
                 "titulo": titulo,
@@ -170,19 +196,17 @@ class MagaluScraper(BaseScraper):
             }
 
         except Exception as e:
-            print(f"   [ERRO MAGALU] {e}")
+            print(f"   ❌ [ERRO MAGALU] {e}")
+            if driver: driver.quit()
             return {'sucesso': False, 'erro': str(e)}
         finally:
             if driver:
-                driver.quit()
+                try: driver.quit()
+                except: pass
 
     def e_texto_financeiro(self, texto):
-        """Verifica se um texto curto contém padrões de preço/parcelamento"""
         if not texto: return False
-        
-        # Padrões que condenam uma linha de tabela
         regex_lixo = re.compile(r'(R\$\s*\d)|(\d{1,2}x\s*de)|(sem\s*juros)|(com\s*juros)|(parcelas)|(à\s*vista)|(cartão)', re.IGNORECASE)
-        
         return bool(regex_lixo.search(texto))
 
     def limpar_descricao_sem_precos(self, texto):
@@ -194,11 +218,7 @@ class MagaluScraper(BaseScraper):
         for linha in linhas:
             linha_clean = linha.strip()
             if not linha_clean: continue
-            
-            # Reutiliza a verificação financeira
-            if self.e_texto_financeiro(linha_clean):
-                continue
-            
+            if self.e_texto_financeiro(linha_clean): continue
             linhas_limpas.append(linha_clean)
 
         return "\n\n".join(linhas_limpas)
