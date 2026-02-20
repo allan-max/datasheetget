@@ -14,9 +14,8 @@ class MagaluScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Magalu] Iniciando Scraper (V7 - Title Fix & Win2012 Ready)...")
+            print(f"   [Magalu] Iniciando Scraper (V8 - Título Force JS)...")
             
-            # --- SETUP (Padronizado para Win Server 2012 R2) ---
             if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
             if not os.path.exists(self.pasta_saida): os.makedirs(self.pasta_saida)
 
@@ -31,25 +30,33 @@ class MagaluScraper(BaseScraper):
             # CRÍTICO: Versão 109 para rodar no Windows Server 2012 R2
             driver = uc.Chrome(options=options, version_main=109)
             
-            # 1. ACESSO
             print(f"   [Magalu] Acessando: {self.url}")
             driver.set_page_load_timeout(30)
             driver.get(self.url)
 
-            # Aguarda o elemento de Título específico do Magalu
+            titulo = "Produto Magalu"
+
+            # 1. TENTA CAPTURAR O TÍTULO DIRETAMENTE COM SELENIUM/JS (Mais Forte)
             try:
-                WebDriverWait(driver, 15).until(
+                el_h1 = WebDriverWait(driver, 15).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, "h1[data-testid='heading']"))
                 )
-            except: pass
+                # Puxa o texto via JavaScript para ignorar se o CSS estiver ocultando algo
+                texto_js = driver.execute_script("return arguments[0].innerText;", el_h1)
+                
+                if texto_js and len(texto_js) > 5:
+                    titulo = self.limpar_texto(texto_js)
+                else:
+                    titulo = self.limpar_texto(el_h1.text)
+            except:
+                print("   [Magalu] Aviso: h1 principal demorou a carregar.")
 
-            # 2. Scroll para carregar conteúdo (Lazy Load)
+            # Scroll para carregar resto da página
             driver.execute_script("window.scrollTo(0, 800);")
             time.sleep(1)
             driver.execute_script("window.scrollTo(0, 1500);")
             time.sleep(1)
             
-            # Tenta clicar em "Ver mais"
             try:
                 btns = driver.find_elements(By.TAG_NAME, "button")
                 for btn in btns:
@@ -60,31 +67,35 @@ class MagaluScraper(BaseScraper):
 
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-            # --- TÍTULO ---
-            titulo = "Produto Magalu"
-            
-            # 1. Tenta pela tag exata que você mandou
-            h1 = soup.find("h1", attrs={"data-testid": "heading"})
-            if not h1:
-                # Fallback para o primeiro h1 genérico
-                h1 = soup.find("h1")
+            # 2. PLANO B: BeautifulSoup (H1 genérico, JSON-LD ou Title da página)
+            if titulo == "Produto Magalu" or len(titulo) < 5 or "magazine luiza" in titulo.lower():
                 
-            if h1: 
-                titulo = self.limpar_texto(h1.get_text())
+                # Fallback H1
+                h1_bs = soup.find("h1", attrs={"data-testid": "heading"})
+                if not h1_bs: h1_bs = soup.find("h1")
+                
+                if h1_bs and len(h1_bs.get_text()) > 5:
+                    titulo = self.limpar_texto(h1_bs.get_text())
 
-            # 2. Plano B (JSON-LD) se o título visual falhar ou vier vazio
-            if titulo == "Produto Magalu" or len(titulo) < 5:
-                scripts = soup.find_all("script", type="application/ld+json")
-                for script in scripts:
-                    try:
-                        data = json.loads(script.string)
-                        if isinstance(data, dict) and data.get("@type") == "Product":
-                            nome_json = data.get("name")
-                            if nome_json:
-                                titulo = self.limpar_texto(nome_json)
-                                break
-                    except: pass
-                    
+                # Fallback JSON
+                if titulo == "Produto Magalu" or len(titulo) < 5 or "magazine luiza" in titulo.lower():
+                    scripts = soup.find_all("script", type="application/ld+json")
+                    for script in scripts:
+                        try:
+                            data = json.loads(script.string)
+                            if isinstance(data, dict) and data.get("@type") == "Product":
+                                if data.get("name"):
+                                    titulo = self.limpar_texto(data.get("name"))
+                                    break
+                        except: pass
+
+                # Fallback TAG <TITLE>
+                if titulo == "Produto Magalu" or len(titulo) < 5 or "magazine luiza" in titulo.lower():
+                    if soup.title:
+                        t = soup.title.get_text()
+                        # Tira a parte "| Magazine Luiza" e pega só o nome do item
+                        titulo = self.limpar_texto(t.split('|')[0].replace("Magazine Luiza", "").strip())
+
             print(f"   [DEBUG] Título capturado: {titulo}")
 
             # --- IMAGEM (OG:IMAGE ou JSON) ---
@@ -115,7 +126,6 @@ class MagaluScraper(BaseScraper):
                         break
             
             if container_desc:
-                # Remove tabelas/listas financeiras da descrição
                 elementos_financeiros = container_desc.find_all(['table', 'ul', 'ol', 'div', 'p'])
                 regex_fin = re.compile(r'(R\$\s*\d)|(\d{1,2}x\s*de)|(sem\s*juros)', re.IGNORECASE)
 
@@ -127,7 +137,6 @@ class MagaluScraper(BaseScraper):
 
                 descricao_bruta = container_desc.get_text(separator="\n")
             
-            # Fallback Descrição (JSON-LD)
             if not descricao_bruta:
                 scripts = soup.find_all("script", type="application/ld+json")
                 for script in scripts:

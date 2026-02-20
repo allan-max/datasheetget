@@ -77,11 +77,11 @@ class DocGenerator:
             doc.add_heading('Descrição', level=1)
             doc.add_paragraph(data.get("descricao", "Sem descrição disponível."))
 
-            # 5. Ficha Técnica
-            doc.add_heading('Ficha Técnica', level=1)
+            # 5. Ficha Técnica (AGORA PROTEGIDA PELO IF)
             specs = data.get("caracteristicas", {})
             
             if specs:
+                doc.add_heading('Ficha Técnica', level=1)
                 table = doc.add_table(rows=0, cols=2)
                 table.style = 'Table Grid'
                 
@@ -153,21 +153,23 @@ class DocGenerator:
             pdf.multi_cell(0, 5, txt(data.get("descricao", "")[:3000]))
             pdf.ln(5)
 
-            # Ficha Técnica
-            pdf.set_font("Helvetica", 'B', 11)
-            pdf.cell(0, 8, txt("Ficha Técnica"), ln=True)
-            
+            # Ficha Técnica (AGORA PROTEGIDA PELO IF)
             specs = data.get("caracteristicas", {})
-            items = specs.items() if isinstance(specs, dict) else specs
             
-            for k, v in items:
-                pdf.set_font("Helvetica", 'B', 9)
-                pdf.set_fill_color(240, 240, 240)
-                pdf.cell(0, 6, txt(str(k)), ln=True, fill=True)
+            if specs:
+                pdf.set_font("Helvetica", 'B', 11)
+                pdf.cell(0, 8, txt("Ficha Técnica"), ln=True)
                 
-                pdf.set_font("Helvetica", '', 9)
-                pdf.multi_cell(0, 5, txt(str(v)), border='B')
-                pdf.ln(1)
+                items = specs.items() if isinstance(specs, dict) else specs
+                
+                for k, v in items:
+                    pdf.set_font("Helvetica", 'B', 9)
+                    pdf.set_fill_color(240, 240, 240)
+                    pdf.cell(0, 6, txt(str(k)), ln=True, fill=True)
+                    
+                    pdf.set_font("Helvetica", '', 9)
+                    pdf.multi_cell(0, 5, txt(str(v)), border='B')
+                    pdf.ln(1)
 
             pdf.output(filepath)
             return True
