@@ -3,7 +3,7 @@ from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from fpdf import FPDF
-from PIL import Image  # Necessário para redimensionar
+from PIL import Image
 import os
 
 # --- CONFIGURAÇÃO ---
@@ -15,57 +15,50 @@ HEADER_INFO = {
     "endereco": "RUA SETE 560 COCAL VILA VELHA – ES I 29105-770"
 }
 
-# LIMITES MÁXIMOS PARA A IMAGEM DO PRODUTO (EM PIXELS)
-# Isso impede que imagens muito altas estourem o layout
-MAX_IMG_WIDTH = 800
-MAX_IMG_HEIGHT = 500  # <-- Altura máxima permitida
-
 class DocGenerator:
-    """Gera arquivos DOCX e PDF com controle de tamanho de imagem"""
+    """Gera arquivos DOCX e PDF com controle de tamanho e enquadramento de imagem"""
     
     def _redimensionar_imagem(self, image_path):
         """
-        Abre a imagem temporária, verifica se ela excede os limites
-        de largura ou altura e a redimensiona proporcionalmente se necessário.
-        Sobrescreve o arquivo original.
+        Transforma a imagem original em um QUADRADO perfeito com fundo branco.
+        Isso garante que imagens de produtos altos/finos nunca estourem
+        o limite vertical do PDF e não pulem para a próxima página.
         """
         try:
             img = Image.open(image_path)
-            width, height = img.size
             
-            # Calcula a proporção atual
-            aspect_ratio = width / height
-            
-            new_width = width
-            new_height = height
+            # Trata imagens com transparência (PNG) convertendo para RGB com fundo branco
+            if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                alpha = img.convert('RGBA').split()[-1]
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                bg.paste(img, mask=alpha)
+                img = bg
+            else:
+                img = img.convert("RGB")
 
-            # 1. Verifica se a largura estoura o limite
-            if new_width > MAX_IMG_WIDTH:
-                new_width = MAX_IMG_WIDTH
-                new_height = int(new_width / aspect_ratio)
+            # Define o tamanho padrão do quadrado protetor (ex: 500x500 pixels)
+            MAX_SIZE = 500
             
-            # 2. Verifica se a altura (mesmo após ajustar largura) ainda estoura o limite
-            # Este é o passo crucial para o seu pedido
-            if new_height > MAX_IMG_HEIGHT:
-                new_height = MAX_IMG_HEIGHT
-                new_width = int(new_height * aspect_ratio)
-
-            # Se houve necessidade de redimensionar
-            if (new_width, new_height) != (width, height):
-                # Usa LANCZOS para melhor qualidade na redução
-                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                # Salva por cima do arquivo original
-                img.save(image_path, quality=95, optimize=True)
-                # print(f"   [GERADOR] Imagem redimensionada de {width}x{height} para {new_width}x{new_height}")
+            # Reduz a imagem para caber dentro do quadrado sem distorcer
+            img.thumbnail((MAX_SIZE, MAX_SIZE), Image.Resampling.LANCZOS)
             
+            # Cria a "tela" quadrada em branco
+            square = Image.new('RGB', (MAX_SIZE, MAX_SIZE), (255, 255, 255))
+            
+            # Calcula o centro exato para colar a foto do produto
+            offset_x = (MAX_SIZE - img.width) // 2
+            offset_y = (MAX_SIZE - img.height) // 2
+            
+            square.paste(img, (offset_x, offset_y))
+            
+            # Salva a nova imagem quadrada (substitui a original)
+            square.save(image_path, "JPEG", quality=95)
             return True
         except Exception as e:
-            print(f"   ⚠️ Erro ao tentar redimensionar imagem: {e}")
-            # Se der erro, segue com a imagem original mesmo
+            print(f"   ⚠️ Erro PIL (Redimensionamento): {e}")
             return False
 
     def _adicionar_cabecalho_word(self, doc):
-        """Cria o cabeçalho no Word"""
         table = doc.add_table(rows=1, cols=2)
         table.autofit = False
         table.columns[0].width = Inches(4.5) 
@@ -100,24 +93,22 @@ class DocGenerator:
             h = doc.add_heading(data.get("titulo", "Produto"), 0)
             h.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-            # --- IMAGEM (COM REDIMENSIONAMENTO) ---
+            # --- IMAGEM (AGORA QUADRADA) ---
             img_path = data.get("caminho_imagem_temp")
             if img_path and os.path.exists(img_path):
-                # 1. Chama a função para garantir o tamanho máximo
+                # 1. Aplica o enquadramento perfeito
                 self._redimensionar_imagem(img_path)
                 try:
-                    # 2. Insere no Word. Definimos apenas a largura (Inches(3.2)),
-                    # a altura será automática, mas agora sabemos que não excederá o limite.
+                    # 2. Como a imagem é quadrada, width 3.2 garante height 3.2
                     doc.add_picture(img_path, width=Inches(3.2))
                     doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
                 except: pass
-            # --------------------------------------
-
+            
             # Descrição
             doc.add_heading('Descrição', level=1)
             doc.add_paragraph(data.get("descricao", "Sem descrição disponível."))
 
-            # Ficha Técnica (Condicional)
+            # Ficha Técnica
             specs = data.get("caracteristicas", {})
             if specs:
                 doc.add_heading('Ficha Técnica', level=1)
@@ -147,7 +138,7 @@ class DocGenerator:
                 s = str(s).replace('’', "'").replace('“', '"').replace('”', '"')
                 return s.encode('latin-1', 'replace').decode('latin-1')
 
-            # Cabeçalho PDF
+            # Cabeçalho
             if os.path.exists(LOGO_PATH):
                 try: pdf.image(LOGO_PATH, x=165, y=8, w=30)
                 except: pass
@@ -164,19 +155,17 @@ class DocGenerator:
             pdf.multi_cell(0, 8, txt(data.get("titulo", "Produto")), align='C')
             pdf.ln(5)
 
-            # --- IMAGEM PDF (COM REDIMENSIONAMENTO) ---
+            # --- IMAGEM PDF (AGORA QUADRADA) ---
             img_path = data.get("caminho_imagem_temp")
             if img_path and os.path.exists(img_path):
-                # 1. Chama a função para garantir o tamanho máximo
                 self._redimensionar_imagem(img_path)
                 try:
-                    # Centralização no PDF (A4 largura ~210mm)
-                    # Definimos largura w=90mm. A altura será proporcional e controlada.
-                    x_pos = (210 - 90) / 2 
-                    pdf.image(img_path, x=x_pos, w=90)
-                    pdf.ln(10)
+                    # Centralização no PDF (A4 ~210mm)
+                    # Largura = 80mm. Como é quadrado, a altura será estritos 80mm!
+                    x_pos = (210 - 80) / 2
+                    pdf.image(img_path, x=x_pos, w=80)
+                    pdf.ln(5) # Pula linha após a imagem
                 except: pass
-            # ------------------------------------------
 
             # Descrição
             pdf.set_font("Helvetica", 'B', 11)
@@ -185,7 +174,7 @@ class DocGenerator:
             pdf.multi_cell(0, 5, txt(data.get("descricao", "")[:3000]))
             pdf.ln(5)
 
-            # Ficha Técnica (Condicional)
+            # Ficha Técnica
             specs = data.get("caracteristicas", {})
             if specs:
                 pdf.set_font("Helvetica", 'B', 11)
