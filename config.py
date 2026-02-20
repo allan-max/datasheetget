@@ -16,6 +16,11 @@ SITES_CONFIG = {
         'modulo': 'amazon',
         'classe': 'AmazonScraper'
     },
+    'atacadosp': {
+        'padroes_url': [r'atacadosaopaulo\.com\.br'],
+        'modulo': 'scrapers.atacadosp',
+        'classe': 'AtacadoSPScraper'
+    },
     'FUJIOKA': {
         'padroes_url': [r'fujioka\.com', r'fujiokadistribuidor\.com'],
         'modulo': 'fujioka',
@@ -120,7 +125,6 @@ SITES_CONFIG = {
         'classe': 'BhPhotoVideoScraper'
     },
     'intelbras': {
-        # O padrão abaixo pega "intelbras.com", "intelbras.com.br", "loja.intelbras..."
         'padroes_url': [r'intelbras\.com'],
         'modulo': 'intelbras',
         'classe': 'IntelbrasScraper'
