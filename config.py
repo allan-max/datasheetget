@@ -22,7 +22,7 @@ SITES_CONFIG = {
         'classe': 'AtacadoSPScraper'
     },
     'compragolden': {
-        'padroes_url': [r'compragolden\.com\.br'],
+        'padroes_url': [r'compregolden\.com\.br'],
         'modulo': 'compragolden',
         'classe': 'CompraGoldenScraper'
     },
