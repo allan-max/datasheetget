@@ -21,6 +21,11 @@ SITES_CONFIG = {
         'modulo': 'scrapers.atacadosp',
         'classe': 'AtacadoSPScraper'
     },
+    'compragolden': {
+        'padroes_url': [r'compragolden\.com\.br'],
+        'modulo': 'compragolden',
+        'classe': 'CompraGoldenScraper'
+    },
     'FUJIOKA': {
         'padroes_url': [r'fujioka\.com', r'fujiokadistribuidor\.com'],
         'modulo': 'fujioka',
