@@ -28,7 +28,7 @@ SITES_CONFIG = {
     },
     'samsung': {
         'padroes_url': [r'samsung\.com'],
-        'modulo': 'scrapers.samsung',
+        'modulo': 'samsung',
         'classe': 'SamsungScraper'
     },
     'FRIOPECAS': {
