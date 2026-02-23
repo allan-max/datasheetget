@@ -6,16 +6,16 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 import time
 import os
-import re
+import json
 from .base import BaseScraper
 
 class CompraGoldenScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Compra Golden] Iniciando Scraper (Padrão VTEX - Win2012)...")
+            print(f"   [Compra Golden] Iniciando Scraper (V2 - Extrator Universal)...")
             
-            # --- SETUP ---
+            # --- SETUP (Win Server 2012 R2) ---
             if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
             if not os.path.exists(self.pasta_saida): os.makedirs(self.pasta_saida)
 
@@ -36,80 +36,97 @@ class CompraGoldenScraper(BaseScraper):
             driver.set_page_load_timeout(30)
             driver.get(self.url)
 
-            # Espera o título principal aparecer (Padrão VTEX)
+            # Espera um elemento genérico e universal: a tag H1
             try:
                 WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "vtex-store-components-3-x-productBrand"))
+                    EC.presence_of_element_located((By.TAG_NAME, "h1"))
                 )
             except:
-                print("   ⚠️ Timeout no carregamento do título.")
+                print("   ⚠️ Timeout esperando o H1. Tentando forçar extração...")
 
-            # Scroll para carregar imagens e descrições (Lazy Load típico da VTEX)
+            # Scroll longo para garantir o carregamento das imagens
             driver.execute_script("window.scrollTo(0, 800);")
             time.sleep(1)
-            driver.execute_script("window.scrollTo(0, 1600);")
-            time.sleep(1.5)
+            driver.execute_script("window.scrollTo(0, 1500);")
+            time.sleep(1)
 
             # 2. EXTRAÇÃO
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
             # --- TÍTULO ---
             titulo = "Produto Compra Golden"
-            h1 = soup.find(class_=lambda c: c and "productBrand" in c)
-            if h1: 
+            h1 = soup.find("h1")
+            if h1:
                 titulo = self.limpar_texto(h1.get_text())
-            print(f"   [DEBUG] Título: {titulo}")
+                
+            # Plano B para o Título (OG Meta Tag ou JSON-LD)
+            if titulo == "Produto Compra Golden" or len(titulo) < 3:
+                meta_title = soup.find("meta", property="og:title")
+                if meta_title: 
+                    titulo = self.limpar_texto(meta_title.get("content"))
+                    
+            print(f"   [DEBUG] Título capturado: {titulo}")
 
             # --- IMAGEM ---
             url_img = None
-            img_tag = soup.find("img", class_=lambda c: c and "productImageTag--main" in c)
-            if img_tag:
-                url_img = img_tag.get("src")
             
+            # Tenta pela Meta Tag Universal (A mais garantida)
+            meta_img = soup.find("meta", property="og:image")
+            if meta_img:
+                url_img = meta_img.get("content")
+            
+            # Fallback JSON-LD
             if not url_img:
-                # Fallback: pega qualquer imagem da galeria da VTEX
-                imgs = soup.find_all("img", class_=lambda c: c and "productImageTag" in c)
-                if imgs: url_img = imgs[0].get("src")
-                
+                scripts = soup.find_all("script", type="application/ld+json")
+                for script in scripts:
+                    try:
+                        data = json.loads(script.string)
+                        if isinstance(data, dict) and "image" in data:
+                            imgs = data["image"]
+                            url_img = imgs[0] if isinstance(imgs, list) else imgs
+                            break
+                    except: pass
+                    
             if url_img and url_img.startswith("//"):
                 url_img = "https:" + url_img
+                
+            if url_img:
+                print(f"   [DEBUG] Imagem encontrada: {url_img}")
 
             # --- DESCRIÇÃO ---
             descricao = "Descrição indisponível."
-            div_desc = soup.find("div", class_=lambda c: c and "productDescriptionText" in c)
+            
+            # Procura qualquer DIV que tenha "desc" ou "detalhe" no ID ou Classe
+            div_desc = soup.find("div", id=lambda x: x and "desc" in x.lower())
+            if not div_desc:
+                div_desc = soup.find("div", class_=lambda x: x and "desc" in x.lower())
+            if not div_desc:
+                div_desc = soup.find("div", id=lambda x: x and "detalhe" in x.lower())
+                
             if div_desc:
                 texto_bruto = div_desc.get_text(separator="\n", strip=True)
                 descricao = self.limpar_lixo_comercial(texto_bruto)
+            else:
+                # Tenta pegar da Meta Description se o corpo falhar
+                meta_desc = soup.find("meta", property="og:description")
+                if not meta_desc: meta_desc = soup.find("meta", attrs={"name": "description"})
+                if meta_desc:
+                    descricao = self.limpar_lixo_comercial(meta_desc.get("content", ""))
 
             # --- FICHA TÉCNICA (SPECS) ---
             specs = {}
-            tabelas = soup.find_all("table", class_=lambda c: c and "productSpecificationsTable" in c)
-            
+            # Como a busca por tabela genérica já tinha funcionado para você antes, vamos mantê-la!
+            tabelas = soup.find_all("table")
             for tab in tabelas:
-                # Na VTEX, as linhas tem a classe specificationItemRow
-                rows = tab.find_all("tr", class_=lambda c: c and "specificationItemRow" in c)
+                rows = tab.find_all("tr")
                 for r in rows:
-                    # O nome da especificação fica no <th> e o valor no <td>
-                    th = r.find("th")
-                    td = r.find("td")
-                    if th and td:
-                        k = self.limpar_texto(th.get_text())
-                        v = self.limpar_texto(td.get_text())
+                    cols = r.find_all(["td", "th"])
+                    # Se tiver 2 colunas, é chave=valor
+                    if len(cols) == 2:
+                        k = self.limpar_texto(cols[0].get_text())
+                        v = self.limpar_texto(cols[1].get_text())
                         if k and v and len(k) < 60 and "garantia" not in k.lower():
                             specs[k] = v
-
-            # Fallback se não achar a tabela específica, procura tabelas genéricas
-            if not specs:
-                tabelas = soup.find_all("table")
-                for tab in tabelas:
-                    rows = tab.find_all("tr")
-                    for r in rows:
-                        cols = r.find_all(["td", "th"])
-                        if len(cols) == 2:
-                            k = self.limpar_texto(cols[0].get_text())
-                            v = self.limpar_texto(cols[1].get_text())
-                            if k and v and len(k) < 60 and "garantia" not in k.lower():
-                                specs[k] = v
 
             print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
