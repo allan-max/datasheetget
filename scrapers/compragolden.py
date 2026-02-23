@@ -13,7 +13,7 @@ class CompraGoldenScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Compra Golden] Iniciando Scraper (V2 - Extrator Universal)...")
+            print(f"   [Compra Golden] Iniciando Scraper (V3 - Vue.js Image Fix)...")
             
             # --- SETUP (Win Server 2012 R2) ---
             if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
@@ -44,7 +44,7 @@ class CompraGoldenScraper(BaseScraper):
             except:
                 print("   ⚠️ Timeout esperando o H1. Tentando forçar extração...")
 
-            # Scroll longo para garantir o carregamento das imagens
+            # Scroll longo para garantir o carregamento das imagens (Essencial para Vue.js)
             driver.execute_script("window.scrollTo(0, 800);")
             time.sleep(1)
             driver.execute_script("window.scrollTo(0, 1500);")
@@ -70,12 +70,20 @@ class CompraGoldenScraper(BaseScraper):
             # --- IMAGEM ---
             url_img = None
             
-            # Tenta pela Meta Tag Universal (A mais garantida)
-            meta_img = soup.find("meta", property="og:image")
-            if meta_img:
-                url_img = meta_img.get("content")
+            # TENTATIVA 1: Classe específica enviada por você (Padrão Vue.js do site)
+            div_img = soup.find("div", class_=lambda c: c and "sliderProd-imgPrincipal-wrapperImg" in c)
+            if div_img:
+                img_tag = div_img.find("img")
+                if img_tag:
+                    url_img = img_tag.get("src")
             
-            # Fallback JSON-LD
+            # TENTATIVA 2: Meta Tag Universal
+            if not url_img:
+                meta_img = soup.find("meta", property="og:image")
+                if meta_img:
+                    url_img = meta_img.get("content")
+            
+            # TENTATIVA 3: Fallback JSON-LD
             if not url_img:
                 scripts = soup.find_all("script", type="application/ld+json")
                 for script in scripts:
@@ -87,10 +95,13 @@ class CompraGoldenScraper(BaseScraper):
                             break
                     except: pass
                     
-            if url_img and url_img.startswith("//"):
-                url_img = "https:" + url_img
-                
+            # Correção de caminhos relativos ou mal formados
             if url_img:
+                if url_img.startswith("//"):
+                    url_img = "https:" + url_img
+                elif url_img.startswith("/"):
+                    url_img = "https://www.compregolden.com.br" + url_img
+                
                 print(f"   [DEBUG] Imagem encontrada: {url_img}")
 
             # --- DESCRIÇÃO ---
@@ -115,7 +126,7 @@ class CompraGoldenScraper(BaseScraper):
 
             # --- FICHA TÉCNICA (SPECS) ---
             specs = {}
-            # Como a busca por tabela genérica já tinha funcionado para você antes, vamos mantê-la!
+            # Busca por tabela genérica
             tabelas = soup.find_all("table")
             for tab in tabelas:
                 rows = tab.find_all("tr")
