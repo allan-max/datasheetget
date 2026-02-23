@@ -14,7 +14,7 @@ class SamsungScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Samsung] Iniciando Scraper (V1 - Padrão Unificado)...")
+            print(f"   [Samsung] Iniciando Scraper (V2 - Correção de Imagem)...")
             
             # --- SETUP (Padronizado para Win Server 2012 R2) ---
             if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
@@ -67,7 +67,6 @@ class SamsungScraper(BaseScraper):
             # --- TÍTULO ---
             titulo = "Produto Samsung"
             
-            # Busca as classes de título padrão da Samsung
             h1 = soup.find("h1", class_=lambda c: c and ("title" in c.lower() or "name" in c.lower()))
             if not h1:
                 h1 = soup.find("h1")
@@ -75,7 +74,6 @@ class SamsungScraper(BaseScraper):
             if h1: 
                 titulo = self.limpar_texto(h1.get_text())
 
-            # Fallback JSON-LD
             if titulo == "Produto Samsung" or len(titulo) < 5:
                 scripts = soup.find_all("script", type="application/ld+json")
                 for script in scripts:
@@ -89,11 +87,37 @@ class SamsungScraper(BaseScraper):
                     
             print(f"   [DEBUG] Título capturado: {titulo}")
 
-            # --- IMAGEM (OG:IMAGE ou JSON) ---
+            # --- IMAGEM (NOVA LÓGICA DE CAPTURA) ---
             url_img = None
-            meta_img = soup.find("meta", property="og:image")
-            if meta_img: url_img = meta_img["content"]
             
+            # TENTATIVA 1: Busca diretamente as classes HTML da galeria de produtos
+            img_tags = soup.find_all("img", class_=lambda c: c and (
+                "first-image__main" in c or 
+                "gallery-image" in c or 
+                "pd-header-gallery__image" in c
+            ))
+            
+            for img in img_tags:
+                # O site da Samsung usa muito o 'srcset'. Pegamos a primeira URL dele.
+                src = img.get("src")
+                srcset = img.get("srcset")
+                
+                if not src and srcset:
+                    # Pega o primeiro link antes da vírgula e do espaço
+                    src = srcset.split(',')[0].strip().split(' ')[0]
+                
+                # Bloqueia logos e ícones
+                if src and "logo" not in src.lower() and "icon" not in src.lower():
+                    url_img = src
+                    break
+
+            # TENTATIVA 2: Meta Tags (Caso a visual falhe)
+            if not url_img:
+                meta_img = soup.find("meta", property="og:image")
+                if meta_img and "logo" not in meta_img["content"].lower():
+                    url_img = meta_img["content"]
+            
+            # TENTATIVA 3: JSON-LD (Último recurso)
             if not url_img:
                 scripts = soup.find_all("script", type="application/ld+json")
                 for script in scripts:
@@ -101,20 +125,22 @@ class SamsungScraper(BaseScraper):
                         data = json.loads(script.string)
                         if isinstance(data, dict) and "image" in data:
                             imgs = data["image"]
-                            if isinstance(imgs, list): url_img = imgs[0]
-                            else: url_img = imgs
-                            break
+                            candidato = imgs[0] if isinstance(imgs, list) else imgs
+                            if isinstance(candidato, str) and "logo" not in candidato.lower():
+                                url_img = candidato
+                                break
                     except: pass
                     
-            # Corrige links relativos da Samsung
             if url_img and url_img.startswith("//"): 
                 url_img = "https:" + url_img
+
+            if url_img:
+                print(f"   [DEBUG] Imagem capturada: {url_img}")
 
             # --- DESCRIÇÃO ---
             descricao = "Descrição indisponível."
             blocos_desc = []
             
-            # A Samsung costuma quebrar as descrições em vários blocos de "features"
             features = soup.find_all(["p", "div", "h2", "h3"], class_=lambda c: c and (
                 "feature-benefit__text" in c.lower() or 
                 "feature-benefit__desc" in c.lower() or 
@@ -125,7 +151,6 @@ class SamsungScraper(BaseScraper):
             
             for f in features:
                 txt = f.get_text(separator="\n", strip=True)
-                # Filtra textos vazios ou títulos curtos demais
                 if len(txt) > 20 and txt not in blocos_desc:
                     blocos_desc.append(txt)
             
@@ -133,7 +158,6 @@ class SamsungScraper(BaseScraper):
                 descricao_bruta = "\n\n".join(blocos_desc)
                 descricao = self.limpar_lixo_comercial(descricao_bruta)
             else:
-                # Fallback Descrição (JSON-LD)
                 scripts = soup.find_all("script", type="application/ld+json")
                 for script in scripts:
                     try:
@@ -147,7 +171,6 @@ class SamsungScraper(BaseScraper):
             # --- FICHA TÉCNICA ---
             specs = {}
             
-            # TENTATIVA 1: Listas de especificações comuns na Samsung (ul/li)
             spec_items = soup.find_all(["li", "div"], class_=lambda c: c and "spec" in c.lower() and "item" in c.lower())
             for item in spec_items:
                 nome = item.find(["strong", "span", "p"], class_=lambda c: c and ("name" in c.lower() or "title" in c.lower()))
@@ -159,7 +182,6 @@ class SamsungScraper(BaseScraper):
                     if k and v and len(k) < 60:
                         specs[k] = v
 
-            # TENTATIVA 2: Tabelas Clássicas (Se não achou no formato de lista)
             if not specs:
                 tables = soup.find_all("table")
                 for tbl in tables:
