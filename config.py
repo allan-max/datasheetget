@@ -26,6 +26,11 @@ SITES_CONFIG = {
         'modulo': 'fujioka',
         'classe': 'FujiokaScraper'
     },
+    'samsung': {
+        'padroes_url': [r'samsung\.com'],
+        'modulo': 'scrapers.samsung',
+        'classe': 'SamsungScraper'
+    },
     'FRIOPECAS': {
         'padroes_url': [r'friopecas\.com\.br'],
         'modulo': 'friopecas',
