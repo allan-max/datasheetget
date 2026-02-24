@@ -4,7 +4,7 @@ from selenium.webdriver.chrome.options import Options
 from bs4 import BeautifulSoup
 import time
 from .base import BaseScraper
-
+# teste
 class AmazonScraper(BaseScraper):
     def executar(self):
         driver = None
