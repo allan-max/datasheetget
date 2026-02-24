@@ -128,6 +128,7 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
 
 @app.route('/api/datasheet/processar', methods=['POST'])
 def iniciar_scraping():
+    print(" >>> [DEBUG] RECEBI UM PEDIDO AGORA! <<< ")
     dados = request.get_json()
     
     lista_processamento = [] 

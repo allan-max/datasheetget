@@ -73,4 +73,4 @@ if __name__ == '__main__':
     
     # O parâmetro threaded=True é ESSENCIAL para que o robô 
     # consiga processar várias URLs ao mesmo tempo sem travar.
-    app.run(host='0.0.0.0', port=6004, threaded=True)
+    app.run(host='0.0.0.0', port=6004, threaded=True, debug=False)
