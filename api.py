@@ -23,6 +23,7 @@ else:
     OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+print(f"ROBO INICIADO!!!!!!!!!!!!")
 print(f"📁 ARQUIVOS SERÃO SALVOS EM: {OUTPUT_DIR}")
 
 URL_CALLBACK_API_NOVA = "http://127.0.0.1:3000/api/datasheet/webhook"
