@@ -4,7 +4,7 @@ from selenium.webdriver.chrome.options import Options
 from bs4 import BeautifulSoup
 import time
 from .base import BaseScraper
-# teste
+
 class AmazonScraper(BaseScraper):
     def executar(self):
         driver = None
@@ -65,7 +65,7 @@ class AmazonScraper(BaseScraper):
                     v = row.find("td")
                     if k and v:
                         specs[k.text.strip()] = v.text.strip()
-            
+            # comentario para teste de git
             # --- FILTRA AS SPECS ---
             specs = self.filtrar_specs(specs)
             if not specs: specs = {"Info": "Verificar descrição completa"}
