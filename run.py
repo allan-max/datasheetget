@@ -1,43 +1,44 @@
-﻿# teste_atacado.py
-import sys
+﻿# run.py
 import os
+import sys
+import builtins
+import logging
 
-# Força o terminal a aceitar UTF-8
-try:
-    sys.stdout.reconfigure(encoding='utf-8')
-except:
-    pass
+# ==============================================================================
+# ☢️ MODO NUCLEAR: ESCRITA DIRETA NO KERNEL DO WINDOWS
+# ==============================================================================
+def print_nuclear(*args, **kwargs):
+    # Junta todo o texto que tentarem imprimir
+    mensagem = " ".join(str(a) for a in args) + "\n"
+    try:
+        # Troca emojis e acentos loucos por "?" para não estourar o CMD
+        texto_seguro = mensagem.encode('ascii', 'replace')
+        # '1' é a porta física oficial da tela no sistema operativo (Imbloqueável)
+        os.write(1, texto_seguro)
+    except Exception:
+        pass
 
-print("="*60)
-print(" 🛑 TESTE DE ISOLAMENTO (SEM API, SEM FLASK) ")
-print(" Se esta tela falar, o culpado é o Flask!")
-print("="*60)
+# Obrigamos o Python a substituir o 'print' normal pelo nosso print nuclear
+builtins.print = print_nuclear
 
-# Importa o seu scraper
-from scrapers.atacadosp import AtacadoSPScraper
+# Obrigamos o Flask (API) a usar o nosso canal nuclear
+class NuclearHandler(logging.Handler):
+    def emit(self, record):
+        print_nuclear(self.format(record))
 
-# Pede o link
-url_teste = input("\nCole o link do Atacado SP e aperte Enter:\n> ").strip()
+logger_api = logging.getLogger('werkzeug')
+logger_api.setLevel(logging.INFO)
+# Limpa os bloqueios antigos e coloca o nosso
+logger_api.handlers = [NuclearHandler()]
 
-if not url_teste:
-    print("Nenhum link. Saindo...")
-    sys.exit()
+# Importamos a sua API apenas depois de blindar o sistema
+from api import app
 
-print(f"\n[SISTEMA] Iniciando a extração para: {url_teste}")
-
-# Prepara a pasta e roda
-scraper = AtacadoSPScraper(url_teste)
-scraper.pasta_saida = "output"
-os.makedirs("output", exist_ok=True)
-
-try:
-    print("[SISTEMA] Chamando o robô agora. Atenção aos logs abaixo:\n")
-    print("-" * 60)
+if __name__ == '__main__':
+    print("="*60)
+    print(" Robo Iniciado com Sucesso | Porta 3001")
+    print(" MODO NUCLEAR ATIVADO: Comunicacao direta com o Windows!")
+    print(" Nenhuma API consegue silenciar este terminal agora.")
+    print("="*60)
     
-    resultado = scraper.executar()
-    
-    print("-" * 60)
-    print("\n[SISTEMA] RESUMO FINAL DEVOLVIDO:")
-    print(resultado)
-except Exception as e:
-    print(f"\n❌ ERRO CRÍTICO CAPTURADO: {e}")
+    app.run(host='0.0.0.0', port=3001, threaded=True)
