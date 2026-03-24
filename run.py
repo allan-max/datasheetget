@@ -4,7 +4,7 @@ import os
 import datetime
 import re
 
-# 1. A VACINA DO WINDOWS SERVER: Força o terminal a aceitar UTF-8 (como fizemos no teste)
+# Força o terminal a aceitar UTF-8
 os.environ["PYTHONIOENCODING"] = "utf-8"
 try:
     sys.stdout.reconfigure(encoding='utf-8')
@@ -28,7 +28,14 @@ class LoggerMestre:
         self.padrao_cor = re.compile(r'\x1B\[[0-9;]*[mK]')
 
     def write(self, mensagem):
-        # 1. Grita na tela preta
+        # 1. SEGURANÇA: Transforma Bytes em String se necessário
+        if isinstance(mensagem, bytes):
+            try:
+                mensagem = mensagem.decode('utf-8', errors='replace')
+            except Exception:
+                mensagem = str(mensagem)
+
+        # 2. Grita na tela preta
         try:
             self.stream.write(mensagem)
             self.stream.flush()
@@ -41,7 +48,7 @@ class LoggerMestre:
             except Exception: pass
         except Exception: pass
 
-        # 2. Salva no arquivo de log da rede
+        # 3. Salva no arquivo de log da rede
         if not mensagem.strip(): return
         
         texto_sem_cor = self.padrao_cor.sub('', mensagem.strip())
