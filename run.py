@@ -17,7 +17,8 @@ from api import app
 
 if __name__ == '__main__':
     print("\n" + "="*60)
-    print(" 🚀 SISTEMA DE DATASHEET ONLINE | PORTA 6004")
+    print(" 🚀 SISTEMA DE DATASHEET ONLINE | PORTA 6005") # Atualize o texto
     print(" 🛡️ Motor do Chrome Liberado e Estável")
     print("="*60 + "\n")
-    app.run(host='0.0.0.0', port=6004, threaded=True, debug=False)
+    # Mude a porta aqui para 6005:
+    app.run(host='0.0.0.0', port=6005, threaded=True, debug=False)
