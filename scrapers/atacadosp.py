@@ -13,7 +13,7 @@ class AtacadoSPScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Atacado SP] Iniciando Scraper (V2 - Extrator Universal + VTEX)...")
+            print(f"   [Atacado SP] Iniciando Scraper (V3 - Anti-Bloqueio VTEX)...")
             
             # --- SETUP ---
             if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
@@ -70,25 +70,44 @@ class AtacadoSPScraper(BaseScraper):
 
             print(f"   [DEBUG] Título capturado: {titulo}")
 
-            # --- IMAGEM (AGORA BAIXA A URL EM VEZ DE TIRAR PRINT) ---
+            # --- IMAGEM (TENTATIVA 1: URL) ---
             url_img = None
             
-            # Tenta pegar pela meta tag (Mais seguro)
-            meta_img = soup.find("meta", property="og:image")
-            if meta_img:
-                url_img = meta_img.get("content")
-                
-            # Se não achar, tenta as classes da VTEX
+            # Tenta pegar a classe exata da imagem principal do VTEX
+            img_tag = soup.find("img", class_=lambda c: c and "productImageTag--main" in c)
+            if img_tag:
+                url_img = img_tag.get("src")
+
             if not url_img:
-                img_tag = soup.find("img", class_=lambda c: c and "productImageTag" in c)
-                if img_tag:
-                    url_img = img_tag.get("src")
+                meta_img = soup.find("meta", property="og:image")
+                if meta_img: url_img = meta_img.get("content")
                     
-            if url_img and url_img.startswith("//"):
-                url_img = "https:" + url_img
-                
             if url_img:
-                print(f"   [DEBUG] Imagem capturada: {url_img}")
+                if url_img.startswith("//"):
+                    url_img = "https:" + url_img
+                elif url_img.startswith("/"):
+                    url_img = "https://www.atacadosaopaulo.com.br" + url_img
+                print(f"   [DEBUG] URL da Imagem encontrada: {url_img}")
+
+            # Tenta baixar a imagem via requisição padrão (base.py)
+            caminho_imagem = self.baixar_imagem_temp(url_img)
+
+            # --- IMAGEM (TENTATIVA 2: SCREENSHOT SE O SERVIDOR BLOQUEOU O DOWNLOAD) ---
+            if not caminho_imagem:
+                print("   ⚠️ Servidor bloqueou o download da imagem. Acionando Screenshot Seguro...")
+                try:
+                    # Procura o elemento da imagem na tela do Chrome
+                    el_img = driver.find_element(By.CSS_SELECTOR, "img[class*='productImageTag--main']")
+                    # Centraliza a imagem na tela para o print não sair cortado
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
+                    time.sleep(1.5) # Dá um tempo para o scroll estabilizar
+                    
+                    filename = os.path.join(self.pasta_saida, "temp_img_atacadosp.png")
+                    el_img.screenshot(filename)
+                    caminho_imagem = filename
+                    print(f"   ✅ Imagem capturada por Screenshot com sucesso!")
+                except Exception as e:
+                    print(f"   ❌ Erro ao tentar o Screenshot: {e}")
 
             # --- DESCRIÇÃO ---
             descricao = "Descrição indisponível."
@@ -126,7 +145,7 @@ class AtacadoSPScraper(BaseScraper):
                 "titulo": titulo,
                 "descricao": descricao,
                 "caracteristicas": specs,
-                "caminho_imagem_temp": self.baixar_imagem_temp(url_img)
+                "caminho_imagem_temp": caminho_imagem
             }
             
             print("   [Atacado SP] Gerando arquivos finais...")
@@ -137,7 +156,7 @@ class AtacadoSPScraper(BaseScraper):
                 'titulo': titulo,
                 'descricao': descricao,
                 'caracteristicas': specs,
-                'total_imagens': 1 if url_img else 0,
+                'total_imagens': 1 if caminho_imagem else 0,
                 'arquivos': arquivos
             }
 
