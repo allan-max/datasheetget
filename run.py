@@ -257,7 +257,7 @@ def health():
 if __name__ == '__main__':
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print("="*60)
-    print(f"🚀 DATASHEET MONOLITO ONLINE - PORTA 6004")
+    print(f"🚀 DATASHEET MONOLITO ONLINE - PORTA 6004 versão unico arquivo")
     print(f"📁 SALVANDO EM: {OUTPUT_DIR}")
     print("="*60)
     app.run(host='0.0.0.0', port=6004, threaded=True, debug=False)
