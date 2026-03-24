@@ -52,8 +52,8 @@ from api import app
 
 if __name__ == '__main__':
     print("="*60)
-    print(" Robo Iniciado | Porta 3001")
+    print(" Robo Iniciado | Porta 6004")
     print(" LOGS REATIVADOS DE FORMA SIMPLES E SEGURA!")
     print("="*60)
     
-    app.run(host='0.0.0.0', port=3001, threaded=True)
+    app.run(host='0.0.0.0', port=6004, threaded=True)
