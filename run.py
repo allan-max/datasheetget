@@ -24,13 +24,11 @@ class CapturadorDeLog:
             self.arquivo = None
 
     def write(self, mensagem):
-        # 1. DEVOLVE A MENSAGEM PARA A TELA PRETA DO WINDOWS!
         try:
             self.stream_original.write(mensagem)
             self.stream_original.flush()
         except: pass
         
-        # 2. SALVA NO ARQUIVO DE REDE
         if not mensagem.strip() or not self.arquivo: return
         
         mensagem_limpa = self.padrao_cor.sub('', mensagem.strip())
