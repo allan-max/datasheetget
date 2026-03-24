@@ -47,6 +47,7 @@ if not log_api.handlers:
 
 from api import app
 
+
 if __name__ == '__main__':
     print("🤖 Robô Iniciado com Sucesso | Porta 3001")
     print("📦 CAIXA PRETA ATIVADA: Lendo tudo e gravando em DEBUG_ROBO.txt")
