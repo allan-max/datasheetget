@@ -4,49 +4,45 @@ import sys
 import os
 from config import identificar_site
 
-# --- CORREÇÃO DE PATH ---
-# Adiciona o diretório atual (onde está este arquivo) ao sys.path
-# Isso garante que o Python encontre a pasta 'scrapers'
 diretorio_atual = os.path.dirname(os.path.abspath(__file__))
 if diretorio_atual not in sys.path:
     sys.path.append(diretorio_atual)
-# ------------------------
 
 class ScraperManager:
     def __init__(self):
         self.scrapers_carregados = {}
     
     def carregar_scraper(self, modulo_nome, classe_nome):
-        # Carregamento dinâmico
         chave = f"{modulo_nome}.{classe_nome}"
         if chave in self.scrapers_carregados:
             return self.scrapers_carregados[chave]
         
         try:
-            # Tenta importar como "scrapers.modulo"
+            print(f" [SISTEMA] Carregando o motor: scrapers.{modulo_nome} -> {classe_nome}")
             modulo = importlib.import_module(f"scrapers.{modulo_nome}")
             return getattr(modulo, classe_nome)
         except ModuleNotFoundError as e:
-            # Debug detalhado se falhar
-            print(f"DEBUG PATH: {sys.path}")
-            raise Exception(f"Erro de Importação: {e}. Verifique se 'scrapers/{modulo_nome}.py' existe e se tem __init__.py na pasta.")
+            print(f" [ERRO FATAL] Falha ao carregar o robô {modulo_nome}: {e}")
+            raise Exception(f"Erro de Importação: {e}")
     
     def executar_scraping(self, url, output_folder):
         try:
+            print(f" [SISTEMA] Analisando URL recebida: {url}")
             site_nome, modulo_nome, classe_nome = identificar_site(url)
             
             if not site_nome:
+                print(" [ALERTA] URL não reconhecida na nossa config.py!")
                 return {'sucesso': False, 'erro': 'Site não configurado ou URL inválida'}
             
+            print(f" [SISTEMA] Site identificado: {site_nome.upper()}")
             ClasseScraper = self.carregar_scraper(modulo_nome, classe_nome)
             
-            # Instancia o scraper
             scraper = ClasseScraper(url)
             scraper.output_folder = output_folder
             
-            print(f"   --> Iniciando scraper: {site_nome}")
+            print(f" [SISTEMA] Dando a partida no {classe_nome}...")
             return scraper.executar()
             
         except Exception as e:
-            # Retorna o erro detalhado para aparecer no log da API
+            print(f" [ERRO GERENCIADOR] Aconteceu um desastre ao executar: {str(e)}")
             return {'sucesso': False, 'erro': str(e)}
