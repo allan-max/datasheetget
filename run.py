@@ -1,9 +1,12 @@
-﻿# run.py
-import os
+﻿import os
 import sys
+
+# Desativa o buffer do Python para os prints não ficarem presos na memória
+os.environ["PYTHONUNBUFFERED"] = "1" 
 
 # Força o Windows a entender acentos sem travar o terminal
 os.environ["PYTHONIOENCODING"] = "utf-8"
+
 try:
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')

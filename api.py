@@ -129,8 +129,18 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
 
 @app.route('/api/datasheet/processar', methods=['POST'])
 def iniciar_scraping():
-    print(" >>> [DEBUG] RECEBI UM PEDIDO AGORA! <<< ")
-    dados = request.get_json()
+    # O flush=True obriga o CMD a mostrar a mensagem IMEDIATAMENTE
+    print("\n >>> [DEBUG] RECEBI UM PEDIDO AGORA! <<< ", flush=True)
+    
+    # force=True ignora caso o bot do Node.js esqueça o header Content-Type
+    # silent=True evita que o Flask quebre a aplicação se o JSON vier malformado
+    dados = request.get_json(silent=True, force=True)
+    
+    if not dados:
+        print(" ❌ [ERRO] O Bot não enviou dados ou o JSON está quebrado!", flush=True)
+        return jsonify({"error": "Nenhuma URL fornecida ou JSON inválido"}), 400
+
+    print(f" 📦 [DADOS RECEBIDOS]: {dados}", flush=True)
     
     lista_processamento = [] 
     
@@ -174,7 +184,8 @@ def iniciar_scraping():
             })
 
     if not lista_processamento:
-        return jsonify({"error": "Nenhuma URL fornecida"}), 400
+        print(" ❌ [ERRO] JSON recebido, mas não achei nenhuma URL nele.", flush=True)
+        return jsonify({"error": "Nenhuma URL fornecida no corpo da requisição"}), 400
 
     ids_gerados = []
     
