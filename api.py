@@ -149,10 +149,14 @@ def iniciar_scraping():
         codigo_tarefa = dados.get('codigoTarefa')
         bloco_dados = dados.get('dados', {})
         url = bloco_dados.get('url')
+        
+        # Puxa o webhook que o bot mandou, se não tiver, usa o padrão
+        webhook_dinamico = bloco_dados.get('webhook_url') or URL_CALLBACK_API_NOVA
+        
         if url:
             lista_processamento.append({
                 "url": url,
-                "webhook": URL_CALLBACK_API_NOVA, 
+                "webhook": webhook_dinamico, # <-- CORRIGIDO!
                 "origem": "API_NOVA",
                 "codigo_tarefa": codigo_tarefa,
                 "custom_id": None
