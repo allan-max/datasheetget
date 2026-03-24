@@ -1,38 +1,42 @@
 ﻿# run.py
-import sys
 import os
+import sys
+import builtins
 import logging
 
-# 1. CLASSE PARA FORÇAR O PYTHON A CUSPIR O TEXTO NA TELA NA MESMA HORA
-class FlushAutomatico:
-    def __init__(self, stream):
-        self.stream = stream
-    def write(self, data):
-        self.stream.write(data)
-        self.stream.flush() # <--- O segredo está aqui (força a impressão imediata)
-    def writelines(self, datas):
-        self.stream.writelines(datas)
-        self.stream.flush()
-    def __getattr__(self, attr):
-        return getattr(self.stream, attr)
+# 1. FORÇA O SISTEMA OPERACIONAL A NÃO GUARDAR TEXTO NA MEMÓRIA
+os.environ["PYTHONUNBUFFERED"] = "1"
 
-# Substitui as saídas padrão do sistema pela nossa saída forçada
-sys.stdout = FlushAutomatico(sys.stdout)
-sys.stderr = FlushAutomatico(sys.stderr)
+# 2. RECONECTA OS CANAIS DIRETAMENTE AO MONITOR FÍSICO DO WINDOWS
+sys.stdout = sys.__stdout__
+sys.stderr = sys.__stderr__
 
-# 2. OBRIGA A API (FLASK/WERKZEUG) A MOSTRAR TODAS AS REQUISIÇÕES
+# 3. O HACK DO PRINT: Obriga qualquer print no código a ir para a tela instantaneamente
+_print_original = builtins.print
+
+def print_forçado(*args, **kwargs):
+    kwargs['file'] = sys.__stdout__
+    kwargs['flush'] = True
+    _print_original(*args, **kwargs)
+
+builtins.print = print_forçado
+
+# 4. FORÇA A API (FLASK/WERKZEUG) A ANUNCIAR AS REQUISIÇÕES
 log_api = logging.getLogger('werkzeug')
 log_api.setLevel(logging.INFO)
+if not log_api.handlers:
+    handler = logging.StreamHandler(sys.__stdout__)
+    log_api.addHandler(handler)
 
-# Importa a sua API
+# Só importamos a API depois de blindar os logs
 from api import app
 
 if __name__ == '__main__':
     print("\n" + "="*60)
     print(" 🤖 Robô Iniciado com Sucesso | Porta 3001 ")
-    print(" 📡 MODO RAIO-X: Todos os logs e requisições na tela! ")
-    print(" Aguardando chamadas na API... ")
+    print(" 📡 MODO RAIO-X NÍVEL MÁXIMO ATIVADO! ")
+    print(" Nenhuma biblioteca conseguirá ocultar os logs agora.")
+    print(" Aguardando chamadas na API...")
     print("="*60 + "\n")
     
-    # Inicia o servidor
     app.run(host='0.0.0.0', port=3001, threaded=True)
