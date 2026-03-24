@@ -207,7 +207,7 @@ def iniciar_scraping():
 
     return jsonify({
         "success": True,
-        "message": "FANTASMA DESCOBERTO ALLAN",
+        "message": "Processamento iniciado",
         "ids_internos": ids_gerados
     }), 202
 

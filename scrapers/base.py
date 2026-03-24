@@ -15,6 +15,8 @@ class BaseScraper:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
+        
+        # LISTA DE TERMOS PARA REMOVER
         self.termos_proibidos = [
             "garantia", "devolução", "reembolso", "troca",
             "frete", "envio", "entrega", "postagem", "rastreio",
@@ -31,46 +33,71 @@ class BaseScraper:
         return re.sub(r'\s+', ' ', texto).strip()
 
     def limpar_lixo_comercial(self, texto):
-        print("   [LIMPEZA] Removendo lixo comercial (garantia, frete, etc)...")
+        """Remove linhas que contêm informações de venda/garantia"""
         if not texto: return "Descrição não disponível."
+        
         linhas = texto.split('\n')
         linhas_limpas = []
+        
         for linha in linhas:
             linha_lower = linha.lower().strip()
+            
+            # Pula linhas vazias ou muito curtas
             if len(linha_lower) < 3: continue
+            
+            # Se a linha tiver termo proibido, PULA (não adiciona)
             tem_lixo = False
             for termo in self.termos_proibidos:
                 if termo in linha_lower:
                     tem_lixo = True
                     break
+            
             if not tem_lixo:
+                # Remove caracteres estranhos no início (ex: bullets)
                 linha_limpa = re.sub(r'^[\s\-\•\.\*]+', '', linha).strip()
                 linhas_limpas.append(linha_limpa)
+                
+        # Reconstrói o texto
         texto_final = "\n".join(linhas_limpas)
+        
+        # Filtro extra: Se sobrou muito pouco texto, coloca aviso padrão
         if len(texto_final) < 10:
             return "Informações técnicas não detalhadas."
+            
         return texto_final
 
     def filtrar_specs(self, specs_dict):
-        print("   [LIMPEZA] Filtrando Ficha Técnica...")
+        """Remove chaves do dicionário de specs que sejam lixo (ex: 'Garantia': '3 meses')"""
         specs_limpas = {}
         for k, v in specs_dict.items():
             k_lower = str(k).lower()
             v_lower = str(v).lower()
+            
             eh_lixo = False
             for termo in self.termos_proibidos:
-                if termo in k_lower: 
+                if termo in k_lower: # Remove se a chave for "Garantia do Vendedor"
                     eh_lixo = True
                     break
+            
             if not eh_lixo:
                 specs_limpas[k] = v
         return specs_limpas
 
+    def baixar_imagem_temp(self, url_imagem):
+        if not url_imagem or not self.output_folder: return None
+        try:
+            if url_imagem.startswith("//"): url_imagem = "https:" + url_imagem
+            res = requests.get(url_imagem, headers=self.headers, stream=True, timeout=10)
+            if res.status_code == 200:
+                filename = os.path.join(self.output_folder, "temp_img.jpg")
+                img = Image.open(BytesIO(res.content)).convert("RGB")
+                img.save(filename, "JPEG", quality=90)
+                return filename
+        except: pass
+        return None
+
     def gerar_arquivos_finais(self, dados):
-        print(f" [SISTEMA] Iniciando a montagem final para: {dados.get('titulo', 'Produto')}")
-        if not self.output_folder: 
-            print(" [ERRO GRAVE] A pasta de saída não foi configurada!")
-            raise Exception("Pasta de saída indefinida")
+        if not self.output_folder: raise Exception("Pasta de saída indefinida")
 
         if 'titulo' in dados and dados['titulo']:
             dados['titulo'] = str(dados['titulo']).upper()
@@ -85,18 +112,13 @@ class BaseScraper:
         path_pdf = os.path.join(self.output_folder, nome_pdf)
 
         gen = DocGenerator()
-        print(" [SISTEMA] Chamando o Gerador de Word...")
         gen.create_word(dados, path_word)
-        print(" [SISTEMA] Chamando o Gerador de PDF...")
         gen.create_pdf(dados, path_pdf)
 
         if dados.get("caminho_imagem_temp") and os.path.exists(dados["caminho_imagem_temp"]):
-            try: 
-                os.remove(dados["caminho_imagem_temp"])
-                print("   [SISTEMA] Imagem temporária deletada.")
+            try: os.remove(dados["caminho_imagem_temp"])
             except: pass
 
-        print(" [SISTEMA] Processo de arquivos finalizado com SUCESSO!")
         return {
             'word_nome': nome_word,
             'pdf_nome': nome_pdf,

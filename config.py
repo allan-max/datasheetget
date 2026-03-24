@@ -18,7 +18,7 @@ SITES_CONFIG = {
     },
     'atacadosp': {
         'padroes_url': [r'atacadosaopaulo\.com\.br'],
-        'modulo': 'atacadosp',           # <--- CORRIGIDO
+        'modulo': 'scrapers.atacadosp',
         'classe': 'AtacadoSPScraper'
     },
     'compragolden': {

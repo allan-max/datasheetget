@@ -6,6 +6,7 @@ from fpdf import FPDF
 from PIL import Image
 import os
 
+# --- CONFIGURAÇÃO ---
 LOGO_PATH = r"C:\Users\Administrator\Desktop\datasheetget\utils\ventura.png"
 
 HEADER_INFO = {
@@ -15,10 +16,18 @@ HEADER_INFO = {
 }
 
 class DocGenerator:
+    """Gera arquivos DOCX e PDF com controle de tamanho e enquadramento de imagem"""
+    
     def _redimensionar_imagem(self, image_path):
-        print("   [FABRICA] Redimensionando a imagem para ficar quadrada...")
+        """
+        Transforma a imagem original em um QUADRADO perfeito com fundo branco.
+        Isso garante que imagens de produtos altos/finos nunca estourem
+        o limite vertical do PDF e não pulem para a próxima página.
+        """
         try:
             img = Image.open(image_path)
+            
+            # Trata imagens com transparência (PNG) convertendo para RGB com fundo branco
             if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
                 alpha = img.convert('RGBA').split()[-1]
                 bg = Image.new("RGB", img.size, (255, 255, 255))
@@ -27,17 +36,26 @@ class DocGenerator:
             else:
                 img = img.convert("RGB")
 
+            # Define o tamanho padrão do quadrado protetor (ex: 500x500 pixels)
             MAX_SIZE = 500
+            
+            # Reduz a imagem para caber dentro do quadrado sem distorcer
             img.thumbnail((MAX_SIZE, MAX_SIZE), Image.Resampling.LANCZOS)
+            
+            # Cria a "tela" quadrada em branco
             square = Image.new('RGB', (MAX_SIZE, MAX_SIZE), (255, 255, 255))
+            
+            # Calcula o centro exato para colar a foto do produto
             offset_x = (MAX_SIZE - img.width) // 2
             offset_y = (MAX_SIZE - img.height) // 2
+            
             square.paste(img, (offset_x, offset_y))
+            
+            # Salva a nova imagem quadrada (substitui a original)
             square.save(image_path, "JPEG", quality=95)
-            print("   [FABRICA] Imagem redimensionada com sucesso!")
             return True
         except Exception as e:
-            print(f"   [ERRO FABRICA] Falha ao tratar a imagem: {e}")
+            print(f"   ⚠️ Erro PIL (Redimensionamento): {e}")
             return False
 
     def _adicionar_cabecalho_word(self, doc):
@@ -45,6 +63,8 @@ class DocGenerator:
         table.autofit = False
         table.columns[0].width = Inches(4.5) 
         table.columns[1].width = Inches(2.0)
+
+        # Lado Esquerdo
         cell_text = table.cell(0, 0)
         p = cell_text.paragraphs[0]
         run_nome = p.add_run(HEADER_INFO["empresa"] + "\n")
@@ -54,6 +74,8 @@ class DocGenerator:
         run_rest = p.add_run(f"{HEADER_INFO['cnpj']}\n{HEADER_INFO['endereco']}")
         run_rest.font.size = Pt(9)
         run_rest.font.name = 'Arial'
+
+        # Lado Direito (Logo)
         cell_img = table.cell(0, 1)
         p_img = cell_img.paragraphs[0]
         p_img.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -63,24 +85,30 @@ class DocGenerator:
         doc.add_paragraph("")
 
     def create_word(self, data, filepath):
-        print(f"   [FABRICA] Escrevendo documento Word em: {os.path.basename(filepath)}")
         try:
             doc = Document()
             self._adicionar_cabecalho_word(doc)
+            
+            # Título
             h = doc.add_heading(data.get("titulo", "Produto"), 0)
             h.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
+            # --- IMAGEM (AGORA QUADRADA) ---
             img_path = data.get("caminho_imagem_temp")
             if img_path and os.path.exists(img_path):
+                # 1. Aplica o enquadramento perfeito
                 self._redimensionar_imagem(img_path)
                 try:
+                    # 2. Como a imagem é quadrada, width 3.2 garante height 3.2
                     doc.add_picture(img_path, width=Inches(3.2))
                     doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
                 except: pass
             
+            # Descrição
             doc.add_heading('Descrição', level=1)
             doc.add_paragraph(data.get("descricao", "Sem descrição disponível."))
 
+            # Ficha Técnica
             specs = data.get("caracteristicas", {})
             if specs:
                 doc.add_heading('Ficha Técnica', level=1)
@@ -96,14 +124,12 @@ class DocGenerator:
                     row[1].text = str(v)
 
             doc.save(filepath)
-            print("   [FABRICA] Word salvo com sucesso!")
             return True
         except Exception as e:
-            print(f"   [ERRO FABRICA] Falha no Word: {e}")
+            print(f"   [ERRO WORD] {e}")
             return False
 
     def create_pdf(self, data, filepath):
-        print(f"   [FABRICA] Desenhando PDF em: {os.path.basename(filepath)}")
         try:
             pdf = FPDF()
             pdf.add_page()
@@ -112,6 +138,7 @@ class DocGenerator:
                 s = str(s).replace('’', "'").replace('“', '"').replace('”', '"')
                 return s.encode('latin-1', 'replace').decode('latin-1')
 
+            # Cabeçalho
             if os.path.exists(LOGO_PATH):
                 try: pdf.image(LOGO_PATH, x=165, y=8, w=30)
                 except: pass
@@ -123,24 +150,31 @@ class DocGenerator:
             pdf.cell(0, 4, txt(HEADER_INFO["endereco"]), ln=True)
             pdf.ln(8)
 
+            # Título
             pdf.set_font("Helvetica", 'B', 14)
             pdf.multi_cell(0, 8, txt(data.get("titulo", "Produto")), align='C')
             pdf.ln(5)
 
+            # --- IMAGEM PDF (AGORA QUADRADA) ---
             img_path = data.get("caminho_imagem_temp")
             if img_path and os.path.exists(img_path):
+                self._redimensionar_imagem(img_path)
                 try:
+                    # Centralização no PDF (A4 ~210mm)
+                    # Largura = 80mm. Como é quadrado, a altura será estritos 80mm!
                     x_pos = (210 - 80) / 2
                     pdf.image(img_path, x=x_pos, w=80)
-                    pdf.ln(5)
+                    pdf.ln(5) # Pula linha após a imagem
                 except: pass
 
+            # Descrição
             pdf.set_font("Helvetica", 'B', 11)
             pdf.cell(0, 8, txt("Descrição"), ln=True)
             pdf.set_font("Helvetica", '', 10)
             pdf.multi_cell(0, 5, txt(data.get("descricao", "")[:3000]))
             pdf.ln(5)
 
+            # Ficha Técnica
             specs = data.get("caracteristicas", {})
             if specs:
                 pdf.set_font("Helvetica", 'B', 11)
@@ -155,8 +189,7 @@ class DocGenerator:
                     pdf.ln(1)
 
             pdf.output(filepath)
-            print("   [FABRICA] PDF gerado com sucesso!")
             return True
         except Exception as e:
-            print(f"   [ERRO FABRICA] Falha no PDF: {e}")
+            print(f"   [ERRO PDF] {e}")
             return False
