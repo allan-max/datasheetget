@@ -1,70 +1,33 @@
 ﻿# run.py
-import logging
 import sys
 import os
-import datetime
-from flask import request
-
-# Força o terminal a não engasgar com acentos
-os.environ["PYTHONIOENCODING"] = "utf-8"
-
-# 1. PREPARANDO O ARQUIVO DE LOG EXTREMO
-PASTA_DO_LOG = r"\\SERVIDOR2\Publico\ALLAN\Logs"
-try:
-    os.makedirs(PASTA_DO_LOG, exist_ok=True)
-except:
-    pass
-ARQUIVO_LOG = os.path.join(PASTA_DO_LOG, "log_extremo_datasheet.txt")
-
-# 2. CONFIGURANDO O LOGGER "DEDO-DURO"
-# Ele vai gravar TUDO, nível DEBUG (o mais detalhado possível)
-logging.basicConfig(
-    level=logging.DEBUG, 
-    format='%(asctime)s | %(levelname)s | %(message)s',
-    handlers=[
-        logging.FileHandler(ARQUIVO_LOG, encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-
-logger = logging.getLogger('RoboMaster')
-
-# Redireciona qualquer "print" antigo que ficou nos scrapers para o nosso Logger
-def print_interceptado(*args, **kwargs):
-    mensagem = " ".join(str(arg) for arg in args)
-    logger.debug(f"[PRINT SCRIPT] {mensagem}")
-
 import builtins
-builtins.print = print_interceptado
 
-# Importa a API
+# 1. Proíbe o Python de segurar texto na memória
+os.environ["PYTHONUNBUFFERED"] = "1"
+
+# 2. O PRINT "TANQUE DE GUERRA"
+def print_direto_na_veia(*args, **kwargs):
+    texto = " ".join(str(a) for a in args)
+    
+    # A MÁGICA: Converte emojis e acentos que travam o CMD em "?"
+    texto_seguro = texto.encode('ascii', errors='replace').decode('ascii')
+    
+    # Escreve direto na porta física do monitor (sys.__stdout__), pulando o Flask
+    try:
+        sys.__stdout__.write(texto_seguro + "\n")
+        sys.__stdout__.flush()
+    except:
+        pass
+
+# Obriga todos os scrapers e a API a usarem o nosso print
+builtins.print = print_direto_na_veia
+
 from api import app
 
-# ==============================================================================
-# 🚨 INTERCEPTADORES DE ROTA (Eles gritam antes mesmo do código processar)
-# ==============================================================================
-
-@app.before_request
-def rastrear_entrada():
-    logger.info(f">>> ALGUÉM BATEU NA PORTA: {request.method} {request.url}")
-    try:
-        corpo = request.get_json(silent=True)
-        logger.debug(f">>> DADOS RECEBIDOS (JSON): {corpo}")
-    except:
-        logger.debug(f">>> DADOS RECEBIDOS (TEXTO): {request.get_data(as_text=True)}")
-
-@app.after_request
-def rastrear_saida(response):
-    logger.info(f"<<< DEVOLVENDO RESPOSTA: Status {response.status}")
-    return response
-
-# ==============================================================================
-
 if __name__ == '__main__':
-    logger.info("="*60)
-    logger.info(" ☢️  INICIANDO MODO DE RASTREAMENTO EXTREMO")
-    logger.info(" 🚪 PORTA DEFINIDA PARA: 6004 (Alinhada com o seu bot)")
-    logger.info("="*60)
-    
-    # Rodando na porta 6004 para garantir que o WhatsApp caia aqui
+    print("="*60)
+    print(" >>> ROBO INICIADO | PORTA 6004 <<< ")
+    print(" MODO TAGARELA: Mostrando absolutamente tudo na tela! ")
+    print("="*60)
     app.run(host='0.0.0.0', port=6004, threaded=True, debug=False)
