@@ -1,48 +1,44 @@
 ﻿# run.py
-import sys
 import os
+import sys
+import builtins
+import logging
 
-# Força o Python a tentar usar UTF-8 nativamente
-os.environ["PYTHONIOENCODING"] = "utf-8"
+# ==============================================================================
+# ☢️ MODO NUCLEAR: ESCRITA DIRETA NO KERNEL DO WINDOWS
+# ==============================================================================
+def print_nuclear(*args, **kwargs):
+    # Junta todo o texto que tentarem imprimir
+    mensagem = " ".join(str(a) for a in args) + "\n"
+    try:
+        # Troca emojis e acentos loucos por "?" para não estourar o CMD
+        texto_seguro = mensagem.encode('ascii', 'replace')
+        # '1' é a porta física oficial da tela no sistema operativo (Imbloqueável)
+        os.write(1, texto_seguro)
+    except Exception:
+        pass
 
-class TerminalAProvaDeBalas:
-    def __init__(self, terminal_original):
-        self.terminal = terminal_original
+# Obrigamos o Python a substituir o 'print' normal pelo nosso print nuclear
+builtins.print = print_nuclear
 
-    def write(self, mensagem):
-        try:
-            # Tentativa 1: Imprimir a mensagem original
-            self.terminal.write(mensagem)
-            self.terminal.flush()
-        except UnicodeEncodeError:
-            # Tentativa 2: O Windows Server 2012 bloqueou o emoji/acento!
-            # Vamos substituir o que ele não entende por "?" e imprimir o resto do texto à força.
-            mensagem_limpa = mensagem.encode('ascii', errors='replace').decode('ascii')
-            try:
-                self.terminal.write(mensagem_limpa)
-                self.terminal.flush()
-            except:
-                pass
-        except Exception:
-            pass
+# Obrigamos o Flask (API) a usar o nosso canal nuclear
+class NuclearHandler(logging.Handler):
+    def emit(self, record):
+        print_nuclear(self.format(record))
 
-    def flush(self):
-        try:
-            self.terminal.flush()
-        except:
-            pass
+logger_api = logging.getLogger('werkzeug')
+logger_api.setLevel(logging.INFO)
+# Limpa os bloqueios antigos e coloca o nosso
+logger_api.handlers = [NuclearHandler()]
 
-# Substitui a saída oficial pela nossa blindada
-sys.stdout = TerminalAProvaDeBalas(sys.__stdout__)
-sys.stderr = TerminalAProvaDeBalas(sys.__stderr__)
-
-# Importa a API por último
+# Importamos a sua API apenas depois de blindar o sistema
 from api import app
 
 if __name__ == '__main__':
     print("="*60)
-    print(" Robô Iniciado com Sucesso | Porta 3001")
-    print(" ESCUDO ANTI-EMOJI ATIVADO: O Windows não vai mais silenciar os logs!")
+    print(" Robo Iniciado com Sucesso | Porta 3001")
+    print(" MODO NUCLEAR ATIVADO: Comunicacao direta com o Windows!")
+    print(" Nenhuma API consegue silenciar este terminal agora.")
     print("="*60)
     
     app.run(host='0.0.0.0', port=3001, threaded=True)
