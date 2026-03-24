@@ -26,6 +26,13 @@ class AtacadoSPScraper(BaseScraper):
             options.add_argument("--no-default-browser-check")
             options.add_argument("--password-store=basic")
             options.add_argument("--disable-http2")
+            
+            # --- 3 ESCUDOS NOVOS PARA O WINDOWS SERVER 2012 ---
+            options.add_argument("--no-sandbox") 
+            options.add_argument("--disable-dev-shm-usage") 
+            options.add_argument("--disable-gpu") 
+            # --------------------------------------------------
+
             options.page_load_strategy = 'eager'
             
             # CRÍTICO: Versão 109 para Windows Server 2012 R2
