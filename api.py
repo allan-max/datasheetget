@@ -257,5 +257,4 @@ if __name__ == '__main__':
     print("🚀 API V7 - UNIVERSAL ID RESPONSE")
     print("   O Bot receberá o ID em: 'request_id', 'custom_id', 'id'")
     print("="*60)
-    # Mude a porta aqui também para 6005:
-    app.run(host='0.0.0.0', port=6005, threaded=True, debug=False)
+    app.run(host='0.0.0.0', port=6004, threaded=True, debug=False)
