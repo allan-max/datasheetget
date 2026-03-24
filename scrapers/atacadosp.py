@@ -6,130 +6,88 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 import time
 import os
-import json
 from .base import BaseScraper
 
 class AtacadoSPScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Atacado SP] Iniciando Scraper (V3 - Anti-Bloqueio VTEX)...")
+            print(f"   [Atacado SP] Iniciando Scraper (V4 - Correção de Pasta)...", flush=True)
             
-            # --- SETUP ---
-            if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
-            if not os.path.exists(self.pasta_saida): os.makedirs(self.pasta_saida)
+            # CORREÇÃO CRÍTICA AQUI: O sistema base exige o nome 'output_folder'
+            if not hasattr(self, 'output_folder'): 
+                self.output_folder = "output"
+            if not os.path.exists(self.output_folder): 
+                os.makedirs(self.output_folder)
 
             options = uc.ChromeOptions()
             options.add_argument("--headless=new") 
             options.add_argument("--window-size=1920,1080")
             options.add_argument("--no-first-run")
-            options.add_argument("--no-default-browser-check")
             options.add_argument("--password-store=basic")
             options.add_argument("--disable-http2")
             
-            # --- 3 ESCUDOS NOVOS PARA O WINDOWS SERVER 2012 ---
+            # --- ESCUDOS PARA O WINDOWS SERVER 2012 ---
             options.add_argument("--no-sandbox") 
             options.add_argument("--disable-dev-shm-usage") 
             options.add_argument("--disable-gpu") 
-            # --------------------------------------------------
 
             options.page_load_strategy = 'eager'
             
-            # CRÍTICO: Versão 109 para Windows Server 2012 R2
             driver = uc.Chrome(options=options, version_main=109)
             
-            # 1. ACESSO
-            print(f"   [Atacado SP] Acessando: {self.url}")
+            print(f"   [Atacado SP] Acessando: {self.url}", flush=True)
             driver.set_page_load_timeout(30)
             driver.get(self.url)
 
-            # Espera o título principal (H1 universal ou VTEX)
             try:
                 WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "h1"))
+                    EC.presence_of_element_located((By.CLASS_NAME, "vtex-store-components-3-x-productBrand"))
                 )
             except:
-                print("   ⚠️ Timeout no carregamento inicial. Tentando forçar...")
+                print("   [Aviso] Timeout no carregamento inicial.", flush=True)
 
-            # Scroll para carregar imagens e descrições (Lazy Load)
             driver.execute_script("window.scrollTo(0, 800);")
             time.sleep(1)
             driver.execute_script("window.scrollTo(0, 1500);")
-            time.sleep(1.5)
+            time.sleep(1)
 
-            # 2. EXTRAÇÃO
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-            # --- TÍTULO ---
             titulo = "Produto Atacado SP"
             h1 = soup.find(class_=lambda c: c and "productBrand" in c)
-            if not h1:
-                h1 = soup.find("h1")
-                
             if h1: 
                 titulo = self.limpar_texto(h1.get_text())
-                
-            # Fallback (OG Meta Tag)
-            if titulo == "Produto Atacado SP" or len(titulo) < 3:
-                meta_title = soup.find("meta", property="og:title")
-                if meta_title: 
-                    titulo = self.limpar_texto(meta_title.get("content"))
+            print(f"   [DEBUG] Titulo: {titulo}", flush=True)
 
-            print(f"   [DEBUG] Título capturado: {titulo}")
+            caminho_imagem = None
+            try:
+                seletor_img = "img.vtex-store-components-3-x-productImageTag--main"
+                try: 
+                    el_img = driver.find_element(By.CSS_SELECTOR, seletor_img)
+                except:
+                    imgs = driver.find_elements(By.CSS_SELECTOR, "img[src*='arquivos/ids']")
+                    el_img = imgs[0] if imgs else None
 
-            # --- IMAGEM (TENTATIVA 1: URL) ---
-            url_img = None
-            
-            # Tenta pegar a classe exata da imagem principal do VTEX
-            img_tag = soup.find("img", class_=lambda c: c and "productImageTag--main" in c)
-            if img_tag:
-                url_img = img_tag.get("src")
-
-            if not url_img:
-                meta_img = soup.find("meta", property="og:image")
-                if meta_img: url_img = meta_img.get("content")
-                    
-            if url_img:
-                if url_img.startswith("//"):
-                    url_img = "https:" + url_img
-                elif url_img.startswith("/"):
-                    url_img = "https://www.atacadosaopaulo.com.br" + url_img
-                print(f"   [DEBUG] URL da Imagem encontrada: {url_img}")
-
-            # Tenta baixar a imagem via requisição padrão (base.py)
-            caminho_imagem = self.baixar_imagem_temp(url_img)
-
-            # --- IMAGEM (TENTATIVA 2: SCREENSHOT SE O SERVIDOR BLOQUEOU O DOWNLOAD) ---
-            if not caminho_imagem:
-                print("   ⚠️ Servidor bloqueou o download da imagem. Acionando Screenshot Seguro...")
-                try:
-                    # Procura o elemento da imagem na tela do Chrome
-                    el_img = driver.find_element(By.CSS_SELECTOR, "img[class*='productImageTag--main']")
-                    # Centraliza a imagem na tela para o print não sair cortado
+                if el_img:
+                    filename = "temp_img_atacadosp.png"
+                    # Usando a variável correta agora:
+                    caminho_imagem = os.path.join(self.output_folder, filename)
                     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
-                    time.sleep(1.5) # Dá um tempo para o scroll estabilizar
-                    
-                    filename = os.path.join(self.pasta_saida, "temp_img_atacadosp.png")
-                    el_img.screenshot(filename)
-                    caminho_imagem = filename
-                    print(f"   ✅ Imagem capturada por Screenshot com sucesso!")
-                except Exception as e:
-                    print(f"   ❌ Erro ao tentar o Screenshot: {e}")
+                    time.sleep(1)
+                    el_img.screenshot(caminho_imagem)
+                    print(f"   [Sucesso] Imagem salva: {filename}", flush=True)
+            except Exception as e: 
+                print(f"   [Aviso] Erro ao capturar imagem: {e}", flush=True)
 
-            # --- DESCRIÇÃO ---
-            descricao = "Descrição indisponível."
+            descricao = "Descricao indisponivel."
             div_desc = soup.find("div", class_=lambda c: c and "productDescriptionText" in c)
-            
-            if not div_desc:
-                 div_desc = soup.find("div", id=lambda x: x and "desc" in x.lower())
-                 
             if div_desc:
                 texto_bruto = div_desc.get_text(separator="\n", strip=True)
                 descricao = self.limpar_lixo_comercial(texto_bruto)
 
-            # --- FICHA TÉCNICA (SPECS) ---
             specs = {}
-            print("   [Atacado SP] Lendo especificações...")
+            print("   [Atacado SP] Lendo especificacoes...", flush=True)
             
             tabelas = soup.find_all("table", class_=lambda c: c and "productSpecificationsTable" in c)
             if not tabelas:
@@ -145,9 +103,8 @@ class AtacadoSPScraper(BaseScraper):
                         if k and v and len(k) < 60 and "garantia" not in k.lower():
                             specs[k] = v
 
-            print(f"   ✅ Specs encontradas: {len(specs)} itens.")
+            print(f"   [Sucesso] Specs encontradas: {len(specs)} itens.", flush=True)
 
-            # --- FINALIZAÇÃO E GERAÇÃO DE ARQUIVOS ---
             dados = {
                 "titulo": titulo,
                 "descricao": descricao,
@@ -155,7 +112,7 @@ class AtacadoSPScraper(BaseScraper):
                 "caminho_imagem_temp": caminho_imagem
             }
             
-            print("   [Atacado SP] Gerando arquivos finais...")
+            print("   [Atacado SP] Gerando arquivos finais...", flush=True)
             arquivos = self.gerar_arquivos_finais(dados)
             
             return {
@@ -168,7 +125,7 @@ class AtacadoSPScraper(BaseScraper):
             }
 
         except Exception as e:
-            print(f"   ❌ [ERRO ATACADO SP] {e}")
+            print(f"   [ERRO ATACADO SP] {e}", flush=True)
             if driver: driver.quit()
             return {'sucesso': False, 'erro': str(e)}
         finally:
