@@ -1,59 +1,70 @@
 ﻿# run.py
-import os
+import logging
 import sys
+import os
 import datetime
-import builtins
-import re
+from flask import request
 
-# Tenta forçar o terminal a aceitar UTF-8 nativamente
-try:
-    os.environ["PYTHONIOENCODING"] = "utf-8"
-    sys.stdout.reconfigure(encoding='utf-8')
-except:
-    pass
+# Força o terminal a não engasgar com acentos
+os.environ["PYTHONIOENCODING"] = "utf-8"
 
+# 1. PREPARANDO O ARQUIVO DE LOG EXTREMO
 PASTA_DO_LOG = r"\\SERVIDOR2\Publico\ALLAN\Logs"
-ARQUIVO_LOG = os.path.join(PASTA_DO_LOG, "log_python_datasheet.txt")
-padrao_cor = re.compile(r'\x1B\[[0-9;]*[mK]')
-
 try:
     os.makedirs(PASTA_DO_LOG, exist_ok=True)
 except:
     pass
+ARQUIVO_LOG = os.path.join(PASTA_DO_LOG, "log_extremo_datasheet.txt")
 
-_print_original = builtins.print
+# 2. CONFIGURANDO O LOGGER "DEDO-DURO"
+# Ele vai gravar TUDO, nível DEBUG (o mais detalhado possível)
+logging.basicConfig(
+    level=logging.DEBUG, 
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    handlers=[
+        logging.FileHandler(ARQUIVO_LOG, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 
-def print_simples_e_seguro(*args, **kwargs):
-    texto = " ".join(str(arg) for arg in args)
-    
-    # Troca qualquer caractere estranho/emoji por "?" para não travar o Windows
-    texto_limpo_cmd = texto.encode('ascii', errors='replace').decode('ascii')
-    
-    # 1. Tenta mandar para a tela preta com flush imediato
-    kwargs['flush'] = True
-    try:
-        _print_original(texto_limpo_cmd, **kwargs)
-    except:
-        pass
-        
-    # 2. Tenta guardar no ficheiro TXT da rede
-    try:
-        texto_sem_cor = padrao_cor.sub('', texto)
-        agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        with open(ARQUIVO_LOG, 'a', encoding='utf-8') as f:
-            f.write(f"[{agora}] {texto_sem_cor}\n")
-    except:
-        pass
+logger = logging.getLogger('RoboMaster')
 
-# Diz ao Python inteiro para usar o nosso print modificado
-builtins.print = print_simples_e_seguro
+# Redireciona qualquer "print" antigo que ficou nos scrapers para o nosso Logger
+def print_interceptado(*args, **kwargs):
+    mensagem = " ".join(str(arg) for arg in args)
+    logger.debug(f"[PRINT SCRIPT] {mensagem}")
 
+import builtins
+builtins.print = print_interceptado
+
+# Importa a API
 from api import app
 
+# ==============================================================================
+# 🚨 INTERCEPTADORES DE ROTA (Eles gritam antes mesmo do código processar)
+# ==============================================================================
+
+@app.before_request
+def rastrear_entrada():
+    logger.info(f">>> ALGUÉM BATEU NA PORTA: {request.method} {request.url}")
+    try:
+        corpo = request.get_json(silent=True)
+        logger.debug(f">>> DADOS RECEBIDOS (JSON): {corpo}")
+    except:
+        logger.debug(f">>> DADOS RECEBIDOS (TEXTO): {request.get_data(as_text=True)}")
+
+@app.after_request
+def rastrear_saida(response):
+    logger.info(f"<<< DEVOLVENDO RESPOSTA: Status {response.status}")
+    return response
+
+# ==============================================================================
+
 if __name__ == '__main__':
-    print("="*60)
-    print(" Robo Iniciado | Porta 6004")
-    print(" LOGS REATIVADOS DE FORMA SIMPLES E SEGURA!")
-    print("="*60)
+    logger.info("="*60)
+    logger.info(" ☢️  INICIANDO MODO DE RASTREAMENTO EXTREMO")
+    logger.info(" 🚪 PORTA DEFINIDA PARA: 6004 (Alinhada com o seu bot)")
+    logger.info("="*60)
     
-    app.run(host='0.0.0.0', port=6004, threaded=True)
+    # Rodando na porta 6004 para garantir que o WhatsApp caia aqui
+    app.run(host='0.0.0.0', port=6004, threaded=True, debug=False)
