@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify, send_from_directory
 import threading
 import uuid
 import os
+import logging
 import sys
 import requests
 import json
@@ -19,6 +20,14 @@ try:
 except:
     pass
 
+# --- CONFIGURAÇÃO DO NOVO SISTEMA DE LOGS ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(threadName)s: %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 
 # ==============================================================================
@@ -34,8 +43,8 @@ else:
     OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-print(f"ROBO INICIADO!!!!!!!!!!!!")
-print(f"📁 ARQUIVOS SERÃO SALVOS EM: {OUTPUT_DIR}")
+logger.info("ROBO INICIADO!!!!!!!!!!!!")
+logger.info(f"📁 ARQUIVOS SERÃO SALVOS EM: {OUTPUT_DIR}")
 
 URL_CALLBACK_API_NOVA = "http://127.0.0.1:3000/api/datasheet/webhook"
 
@@ -48,7 +57,7 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
     try:
         pasta_pedido = OUTPUT_DIR 
         
-        print(f"\n🔧 [PROCESSANDO] UUID Interno: {request_id_interno}")
+        logger.info(f"🔧 [PROCESSANDO] UUID Interno: {request_id_interno}")
         
         # Define qual ID será enviado de volta.
         # Se o bot mandou um custom_id, usamos ele como PRINCIPAL.
@@ -56,7 +65,7 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
         id_final_para_bot = custom_id if custom_id else request_id_interno
 
         if custom_id:
-            print(f"   🔖 ID DO CLIENTE: {custom_id}")
+            logger.info(f"   🔖 ID DO CLIENTE: {custom_id}")
         
         # Executa o Scraper
         resultado = scraper_manager.executar_scraping(url, pasta_pedido)
@@ -70,7 +79,7 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
         payload_final = {}
 
         if resultado.get('sucesso'):
-            print("   ✅ Sucesso! Preparando webhook...")
+            logger.info("   ✅ Sucesso! Preparando webhook...")
 
             if origem == "API_NOVA":
                 payload_final = {
@@ -100,7 +109,7 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
                 }
         else:
             msg_erro = resultado.get('erro', 'Erro desconhecido')
-            print(f"   ❌ Falha: {msg_erro}")
+            logger.error(f"   ❌ Falha: {msg_erro}")
 
             if origem == "API_NOVA":
                 payload_final = {
@@ -126,32 +135,31 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
 
         # --- ENVIO DO WEBHOOK ---
         if webhook_url:
-            print(f"   📤 Enviando para Webhook: {webhook_url}")
+            logger.info(f"   📤 Enviando para Webhook: {webhook_url}")
             try:
                 requests.post(webhook_url, json=payload_final, timeout=10)
             except Exception as e:
-                print(f"   ❌ Erro ao chamar Webhook: {e}")
+                logger.error(f"   ❌ Erro ao chamar Webhook: {e}")
 
     except Exception as e:
-        print(f"   💥 Erro Crítico na Thread: {str(e)}")
+        logger.exception(f"   💥 Erro Crítico na Thread: {str(e)}")
         pedidos[request_id_interno]['status'] = 'erro_critico'
 
 # --- ROTAS DA API ---
 
 @app.route('/api/datasheet/processar', methods=['POST'])
 def iniciar_scraping():
-    # O flush=True obriga o CMD a mostrar a mensagem IMEDIATAMENTE
-    print("\n >>> [DEBUG] RECEBI UM PEDIDO AGORA! <<< ", flush=True)
+    logger.info(">>> [DEBUG] RECEBI UM PEDIDO AGORA! <<<")
     
     # force=True ignora caso o bot do Node.js esqueça o header Content-Type
     # silent=True evita que o Flask quebre a aplicação se o JSON vier malformado
     dados = request.get_json(silent=True, force=True)
     
     if not dados:
-        print(" ❌ [ERRO] O Bot não enviou dados ou o JSON está quebrado!", flush=True)
+        logger.error("[ERRO] O Bot não enviou dados ou o JSON está quebrado!")
         return jsonify({"error": "Nenhuma URL fornecida ou JSON inválido"}), 400
 
-    print(f" 📦 [DADOS RECEBIDOS]: {dados}", flush=True)
+    logger.info(f"📦 [DADOS RECEBIDOS]: {dados}")
     
     lista_processamento = [] 
     
@@ -167,7 +175,7 @@ def iniciar_scraping():
         if url:
             lista_processamento.append({
                 "url": url,
-                "webhook": webhook_dinamico, # <-- CORRIGIDO!
+                "webhook": webhook_dinamico, 
                 "origem": "API_NOVA",
                 "codigo_tarefa": codigo_tarefa,
                 "custom_id": None
@@ -199,7 +207,7 @@ def iniciar_scraping():
             })
 
     if not lista_processamento:
-        print(" ❌ [ERRO] JSON recebido, mas não achei nenhuma URL nele.", flush=True)
+        logger.error("[ERRO] JSON recebido, mas não achei nenhuma URL nele.")
         return jsonify({"error": "Nenhuma URL fornecida no corpo da requisição"}), 400
 
     ids_gerados = []
@@ -264,8 +272,8 @@ def health_check():
     })
 
 if __name__ == '__main__':
-    print("="*60)
-    print("🚀 API V7 - UNIVERSAL ID RESPONSE")
-    print("   O Bot receberá o ID em: 'request_id', 'custom_id', 'id'")
-    print("="*60)
+    logger.info("="*60)
+    logger.info("🚀 API V7 - UNIVERSAL ID RESPONSE")
+    logger.info("   O Bot receberá o ID em: 'request_id', 'custom_id', 'id'")
+    logger.info("="*60)
     app.run(host='0.0.0.0', port=6004, threaded=True, debug=False)
