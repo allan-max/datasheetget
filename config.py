@@ -16,6 +16,11 @@ SITES_CONFIG = {
         'modulo': 'amazon',
         'classe': 'AmazonScraper'
     },
+    'CASAS_BAHIA': {
+        'padroes_url': [r'casasbahia\.com\.br'],
+        'modulo': 'casasbahia',
+        'classe': 'CasasBahiaScraper'
+    },
     'atacadosp': {
         'padroes_url': [r'atacadosaopaulo\.com\.br'],
         'modulo': 'atacadosp',  # <-- CORRIGIDO AQUI

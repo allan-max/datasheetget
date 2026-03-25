@@ -62,29 +62,34 @@ class DellScraper(BaseScraper):
                 if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   [DEBUG] Título: {titulo}")
 
-            # --- IMAGEM ---
+            # --- IMAGEM (PLANO DUPLO: DOWNLOAD OU SCREENSHOT) ---
             url_img = None
             caminho_imagem = None
             
-            # Prioridade: ID da Dell > Classe genérica > Primeira imagem grande
+            # Prioridade 1: ID da Dell (novo layout)
             img_tag = soup.find("img", attrs={"data-testid": "sharedPolarisHeroPdImage"})
+            # Prioridade 2: Fallback (layout antigo)
             if not img_tag:
                 img_tag = soup.find("img", class_="u-max-full-width")
             
-            if img_tag:
+            if img_tag and img_tag.get("src"):
                 src = img_tag.get("src")
-                if src:
-                    if src.startswith("//"): src = "https:" + src
-                    url_img = src
-            
-            if url_img:
+                if src.startswith("//"): 
+                    src = "https:" + src
+                url_img = src
+                print(f"   [Dell] URL da imagem encontrada: {url_img}")
+                
+                # TENTATIVA 1: Baixar a imagem diretamente (mais seguro e invisível)
+                caminho_imagem = self.baixar_imagem_temp(url_img)
+
+            # TENTATIVA 2: Se o download direto falhar, apela para o screenshot da tela
+            if not caminho_imagem or not os.path.exists(caminho_imagem):
+                print("   [Dell] Fazendo screenshot da imagem do produto...")
                 try:
-                    # Busca elemento para screenshot
                     el_img = None
                     try:
                         el_img = driver.find_element(By.CSS_SELECTOR, "img[data-testid='sharedPolarisHeroPdImage']")
                     except:
-                        # Fallback
                         imgs = driver.find_elements(By.TAG_NAME, "img")
                         for img in imgs:
                             if img.get_attribute("src") == url_img:
@@ -92,23 +97,37 @@ class DellScraper(BaseScraper):
                                 break
                     
                     if el_img:
-                        filename = "temp_img_dell.png"
+                        filename = f"temp_img_dell_{int(time.time())}.png"
                         caminho_imagem = os.path.join(self.pasta_saida, filename)
+                        
+                        # Centraliza para garantir que a imagem não saia cortada
                         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
-                        time.sleep(1)
+                        time.sleep(1.5)
                         el_img.screenshot(caminho_imagem)
-                        print(f"   ✅ Imagem salva: {filename}")
+                        print(f"   ✅ Imagem salva via screenshot!")
                 except Exception as e:
                     print(f"   ⚠️ Erro ao salvar imagem: {e}")
 
-            # --- DESCRIÇÃO ---
+            # --- DESCRIÇÃO (ATUALIZADO PARA O NOVO LAYOUT DA DELL) ---
             descricao = "Descrição indisponível."
-            desc_container = soup.find("div", class_="pd-features")
+            
+            # Tenta achar a div nova (long-description ou hero-long-desc) ou a antiga (pd-features)
+            desc_container = soup.find("div", id="long-description")
+            if not desc_container:
+                desc_container = soup.find("div", id="hero-long-desc")
+            if not desc_container:
+                desc_container = soup.find("div", class_="pd-features")
+                
             if desc_container:
+                # Remove scripts e estilos escondidos para não poluir o PDF
                 for script in desc_container(["script", "style"]):
                     script.decompose()
+                
                 texto_bruto = desc_container.get_text(separator="\n", strip=True)
                 descricao = self.limpar_descricao_dell(texto_bruto)
+                print("   ✅ Descrição extraída com sucesso.")
+            else:
+                print("   ⚠️ Caixa de descrição não encontrada no HTML.")
 
             # --- FICHA TÉCNICA (COM FILTRO DE GARANTIA) ---
             specs = {}
