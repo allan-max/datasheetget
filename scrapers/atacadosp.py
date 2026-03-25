@@ -77,31 +77,28 @@ class AtacadoSPScraper(BaseScraper):
                 titulo = self.limpar_texto(h1.get_text())
             self.log_debug(f"7. Título capturado: {titulo}")
 
-            # --- IMAGEM (SCREENSHOT SEGURO) ---
-            self.log_debug("8. Tentando capturar a imagem...")
+            # --- IMAGEM (VIA DOWNLOAD, MAIS SEGURO QUE SCREENSHOT) ---
+            self.log_debug("8. Tentando capturar a URL da imagem...")
             caminho_imagem = None
             try:
-                seletor_img = "img.vtex-store-components-3-x-productImageTag--main"
-                el_img = None
-                try: 
-                    el_img = driver.find_element(By.CSS_SELECTOR, seletor_img)
-                except:
-                    imgs = driver.find_elements(By.CSS_SELECTOR, "img[src*='arquivos/ids']")
-                    if imgs: el_img = imgs[0]
+                # Procura a imagem usando o BeautifulSoup (baseado na classe que você mandou)
+                img_tag = soup.find("img", class_=lambda c: c and "productImageTag--main" in c)
+                
+                if not img_tag:
+                    # Fallback para qualquer imagem de produto da VTEX se a classe mudar
+                    img_tag = soup.find("img", src=lambda s: s and "arquivos/ids" in s)
 
-                if el_img:
-                    filename = f"temp_img_atacadosp_{int(time.time())}.png"
-                    # CRÍTICO: Guarda a imagem na pasta local do script para não haver bloqueios de rede!
-                    caminho_imagem = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+                if img_tag and img_tag.get("src"):
+                    url_img = img_tag.get("src")
+                    self.log_debug(f"   [OK] URL da imagem encontrada: {url_img}")
                     
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
-                    time.sleep(1.5)
-                    el_img.screenshot(caminho_imagem)
-                    self.log_debug(f"   [OK] Imagem capturada localmente em: {caminho_imagem}")
+                    # Usa a função nativa do BaseScraper para baixar a imagem
+                    caminho_imagem = self.baixar_imagem_temp(url_img)
+                    self.log_debug(f"   [OK] Imagem baixada temporariamente em: {caminho_imagem}")
                 else:
-                    self.log_debug("   [Aviso] Elemento da imagem não encontrado na tela.")
+                    self.log_debug("   [Aviso] Elemento da imagem não encontrado no HTML.")
             except Exception as e: 
-                self.log_debug(f"   [ERRO] Falha ao capturar a imagem: {e}")
+                self.log_debug(f"   [ERRO] Falha ao extrair/baixar a imagem: {e}")
 
             # --- DESCRIÇÃO ---
             self.log_debug("9. Extraindo descrição...")
