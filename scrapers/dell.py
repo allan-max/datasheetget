@@ -71,12 +71,51 @@ class DellScraper(BaseScraper):
                 print(f"   [Dell] URL da imagem encontrada: {url_img}")
                 caminho_img_raw = self.baixar_imagem_temp(url_img)
 
-            # Se o download falhar, tenta o screenshot
+            # Se o download falhar, tenta o screenshot (com tratamento de cookies)
             if not caminho_img_raw or not os.path.exists(caminho_img_raw):
-                print("   [Dell] Tentando screenshot da imagem...")
+                print("   [Dell] Tentando screenshot da imagem (Tratando Cookies)...")
                 try:
+                    # --- NOVO: Lógica para aceitar cookies antes do print ---
+                    print("   [Dell] Tentando fechar banner de cookies TrustArc...")
+                    wait_cookie = WebDriverWait(driver, 5) # Espera curta para não atrasar
+                    
+                    try:
+                        # Seletores comuns da Dell/TrustArc para o botão 'Aceitar tudo'
+                        # Baseado na sua imagem, precisamos clicar no botão principal.
+                        selectors_cookie = [
+                            "button.trustarc-agree-btn",
+                            "#trustarc-agree-btn",
+                            "button[aria-label='Accept All']",
+                            "button#acc-agree",
+                            ".trustarc-banner-safe-area button" # Genérico
+                        ]
+                        
+                        cookie_click = False
+                        for sel in selectors_cookie:
+                            try:
+                                # Procura o botão na tela
+                                cookie_btn = wait_cookie.until(EC.presence_of_element_located((By.CSS_SELECTOR, sel)))
+                                # Clica via JavaScript (mais robusto que o clique normal do Selenium)
+                                driver.execute_script("arguments[0].click();", cookie_btn)
+                                print(f"   [Dell] Cookies aceitos via seletor: {sel}")
+                                time.sleep(1.5) # Espera 1.5s para o banner sumir da animação
+                                cookie_click = True
+                                break
+                            except:
+                                continue
+                        
+                        if not cookie_click:
+                            print("   [Dell] Aviso: Banner de cookies não encontrado ou não clicável.")
+
+                    except Exception as e_cookie:
+                        print(f"   [Dell] Aviso ao tratar cookies (provavelmente não apareceu): {e_cookie}")
+                    # --------------------------------------------------------
+
+                    # Retorna ao topo para centralizar a imagem
                     driver.execute_script("window.scrollTo(0, 0);")
                     el_img = None
+                    
+                    # Procura o elemento da imagem exatamente como antes
                     try:
                         el_img = driver.find_element(By.CSS_SELECTOR, "img[data-testid='sharedPolarisHeroPdImage']")
                     except:
@@ -89,12 +128,18 @@ class DellScraper(BaseScraper):
                     if el_img:
                         temp_png = f"raw_dell_{int(time.time())}.png"
                         caminho_img_raw = os.path.join(self.pasta_saida, temp_png)
+                        
+                        # Centraliza para garantir que a imagem não saia cortada
                         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
-                        time.sleep(1.5)
+                        # Espera curta após centralizar (pode ter animação de zoom)
+                        time.sleep(1.5) 
+                        
                         el_img.screenshot(caminho_img_raw)
-                        print(f"   [Dell] Screenshot RAW salvo em {caminho_img_raw}")
+                        print(f"   [Dell] Screenshot RAW salvo (sem cookies) em {caminho_img_raw}")
+                    else:
+                        print("   [Dell] ERRO: Não achou o elemento da imagem para o print.")
                 except Exception as e:
-                    print(f"   ⚠️ Erro no screenshot: {e}")
+                    print(f"   ⚠️ Erro crítico no screenshot/cookies: {e}")
 
             # === CONVERSÃO PARA JPEG PARA O WORD/PDF (O PULO DO GATO) ===
             if caminho_img_raw and os.path.exists(caminho_img_raw):
