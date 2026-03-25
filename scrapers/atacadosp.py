@@ -77,28 +77,48 @@ class AtacadoSPScraper(BaseScraper):
                 titulo = self.limpar_texto(h1.get_text())
             self.log_debug(f"7. Título capturado: {titulo}")
 
-            # --- IMAGEM (VIA DOWNLOAD, MAIS SEGURO QUE SCREENSHOT) ---
-            self.log_debug("8. Tentando capturar a URL da imagem...")
+            # --- IMAGEM (PLANO DUPLO: DOWNLOAD OU SCREENSHOT) ---
+            self.log_debug("8. Tentando capturar a imagem...")
             caminho_imagem = None
             try:
-                # Procura a imagem usando o BeautifulSoup (baseado na classe que você mandou)
+                # TENTATIVA 1: Achar o link no HTML e baixar silenciosamente
                 img_tag = soup.find("img", class_=lambda c: c and "productImageTag--main" in c)
-                
                 if not img_tag:
-                    # Fallback para qualquer imagem de produto da VTEX se a classe mudar
                     img_tag = soup.find("img", src=lambda s: s and "arquivos/ids" in s)
 
                 if img_tag and img_tag.get("src"):
                     url_img = img_tag.get("src")
-                    self.log_debug(f"   [OK] URL da imagem encontrada: {url_img}")
-                    
-                    # Usa a função nativa do BaseScraper para baixar a imagem
+                    self.log_debug(f"   [OK] URL encontrada: {url_img}")
                     caminho_imagem = self.baixar_imagem_temp(url_img)
-                    self.log_debug(f"   [OK] Imagem baixada temporariamente em: {caminho_imagem}")
-                else:
-                    self.log_debug("   [Aviso] Elemento da imagem não encontrado no HTML.")
+
+                # TENTATIVA 2: Se o servidor bloqueou o download (VTEX faz muito isso), usa o navegador para tirar a foto
+                if not caminho_imagem or not os.path.exists(caminho_imagem):
+                    self.log_debug("   [Aviso] Download bloqueado. Apelando para o Screenshot do elemento...")
+                    
+                    seletor_img = "img.vtex-store-components-3-x-productImageTag--main"
+                    el_img = None
+                    try: 
+                        el_img = driver.find_element(By.CSS_SELECTOR, seletor_img)
+                    except:
+                        imgs = driver.find_elements(By.CSS_SELECTOR, "img[src*='arquivos/ids']")
+                        if imgs: el_img = imgs[0]
+
+                    if el_img:
+                        # Centraliza a imagem na tela para garantir que ela carregou 100%
+                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
+                        time.sleep(2) # Espera a animação de zoom terminar
+                        
+                        # Salva na mesma pasta de output para o gerador de PDF achar fácil
+                        filename = f"temp_img_atacadosp_{int(time.time())}.jpg"
+                        caminho_imagem = os.path.join(self.output_folder, filename)
+                        
+                        el_img.screenshot(caminho_imagem)
+                        self.log_debug(f"   [OK] Screenshot capturado com sucesso em: {caminho_imagem}")
+                    else:
+                        self.log_debug("   [ERRO] Não achou a imagem nem para tirar foto.")
+
             except Exception as e: 
-                self.log_debug(f"   [ERRO] Falha ao extrair/baixar a imagem: {e}")
+                self.log_debug(f"   [ERRO FATAL NA IMAGEM] {e}")
 
             # --- DESCRIÇÃO ---
             self.log_debug("9. Extraindo descrição...")
