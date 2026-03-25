@@ -75,17 +75,35 @@ class DellScraper(BaseScraper):
             if not caminho_img_raw or not os.path.exists(caminho_img_raw):
                 print("   [Dell] Download bloqueado pela Dell. Extraindo via screenshot limpo...")
                 try:
-                    # --- DESTRUIDOR DE BANNERS (Injeta JS para deletar o overlay do HTML) ---
-                    print("   [Dell] Evaporando banner de cookies da tela...")
+                    # --- DESTRUIDOR DE BANNERS DEFINITIVO ---
+                    print("   [Dell] A aguardar o banner de cookies aparecer para o evaporar...")
+                    time.sleep(3) # Espera crucial para dar tempo de o banner carregar no ecrã
+                    
                     driver.execute_script("""
-                        // Procura todos os elementos conhecidos de cookies da Dell/TrustArc
-                        var lixos = document.querySelectorAll('.trustarc-banner-safe-area, #trustarc-banner, .trustarc-banner-container, iframe[src*="trustarc"], #cookie-consent');
-                        // Deleta todos eles da página
+                        // 1. Apaga tudo o que tenha os nomes oficiais da TrustArc / TRUSTe
+                        var seletores = [
+                            '[id*="truste"]', '[class*="truste"]', 
+                            '[id*="trustarc"]', '[class*="trustarc"]',
+                            'iframe[src*="consent"]', '#cookie-consent', 
+                            '#consent_blackbar'
+                        ];
+                        var lixos = document.querySelectorAll(seletores.join(', '));
                         lixos.forEach(elemento => elemento.remove());
-                        // Destrava a rolagem da página caso o banner tenha travado
+                        
+                        // 2. Tática de Terra Arrasada: Apaga qualquer flutuante/pop-up que sobreponha a imagem
+                        var todosElementos = document.querySelectorAll('*');
+                        for(var i=0; i < todosElementos.length; i++) {
+                            var estilo = window.getComputedStyle(todosElementos[i]);
+                            // Se está fixo no ecrã e tem um z-index alto (está por cima de tudo), apagamos!
+                            if ((estilo.position === 'fixed' || estilo.position === 'sticky') && estilo.zIndex > 5) {
+                                todosElementos[i].remove();
+                            }
+                        }
+                        
+                        // Garante que a rolagem volta a funcionar
                         document.body.style.overflow = 'auto';
                     """)
-                    time.sleep(1) # Dá 1 segundo pro navegador processar a exclusão
+                    time.sleep(1) # Dá 1 segundo para o navegador processar a limpeza do ecrã
                     # ------------------------------------------------------------------------
 
                     driver.execute_script("window.scrollTo(0, 0);")
