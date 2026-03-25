@@ -10,7 +10,6 @@ class FrioPecasBot(BaseScraper):
     def executar(self):
         driver = None
         try:
-            # --- CONFIGURAÇÃO DO NAVEGADOR ---
             opts = Options()
             opts.add_argument("--headless=new")
             opts.add_argument("--window-size=1920,3000")
@@ -38,53 +37,69 @@ class FrioPecasBot(BaseScraper):
             img = soup.find("img", class_=re.compile(r"productImageTag--main"))
             if img: url_img = img.get("src")
             if not url_img:
-                # Backup pela Meta Tag
                 meta_img = soup.find("meta", property="og:image")
                 if meta_img: url_img = meta_img.get("content")
 
-            # 3. DESCRIÇÃO (TRATAMENTO DE HTML SUJO)
-            descricao = "Informações não detalhadas."
+            # 3. EXTRAÇÃO INTELIGENTE (DESCRIÇÃO E SPECS MISTURADOS)
+            descricao_linhas = []
+            specs_texto = {}
             
-            # Procura a div exata que você mostrou no log
-            desc_div = soup.find(class_=re.compile(r"productDescriptionText"))
-            if not desc_div:
-                desc_div = soup.find(class_=re.compile(r"productDescription"))
+            desc_div = soup.find(class_=re.compile(r"productDescriptionText|productDescription|friopecas-store-theme-.*-fluid-text"))
 
             if desc_div:
-                # TRUQUE DE MESTRE: Troca <br> por quebra de linha real (\n)
+                # Troca <br> por quebra de linha real (\n)
                 for br in desc_div.find_all("br"):
                     br.replace_with("\n")
                 
-                # Pega o texto limpo
-                raw_text = desc_div.get_text()
-                
-                # Filtra linhas vazias e lixo comercial
+                raw_text = desc_div.get_text(separator=' ')
                 linhas = [line.strip() for line in raw_text.split('\n') if len(line.strip()) > 0]
-                texto_limpo = "\n".join(linhas)
                 
-                descricao = self.limpar_lixo_comercial(texto_limpo)
+                modo_specs = False
+                
+                for linha in linhas:
+                    linha_lower = linha.lower()
+                    
+                    # Se achar o gatilho, liga o modo de captura de specs e pula a linha do título
+                    if "especificações técnicas" in linha_lower or "características técnicas" in linha_lower:
+                        modo_specs = True
+                        continue
+                        
+                    # Se achar gatilhos de fim de bloco, desliga o modo specs
+                    if modo_specs and ("informação adicional" in linha_lower or "imagens meramente ilustrativas" in linha_lower):
+                        modo_specs = False
+                    
+                    if modo_specs:
+                        # Se tem ':', é uma especificação técnica
+                        if ":" in linha:
+                            partes = linha.split(":", 1)
+                            chave = self.limpar_texto(partes[0])
+                            valor = self.limpar_texto(partes[1])
+                            if chave and valor:
+                                specs_texto[chave] = valor
+                        else:
+                            # Se não tem ':', ignora ou trata como continuação
+                            pass
+                    else:
+                        # Se não está no modo specs, vai para a descrição normal
+                        descricao_linhas.append(linha)
 
-            # 4. CARACTERÍSTICAS (LEITURA LIMPA DOS ATRIBUTOS DATA)
+            texto_limpo = "\n".join(descricao_linhas)
+            descricao = self.limpar_lixo_comercial(texto_limpo)
+
+            # 4. CARACTERÍSTICAS (TENTA O PADRÃO VTEX PRIMEIRO)
             specs = {}
-            
-            # O HTML da Friopeças tem os dados puros dentro das tags span:
-            # <span data-specification-name="Voltagem" data-specification-value="220V">
-            
             itens_especificos = soup.find_all(attrs={"data-specification-name": True, "data-specification-value": True})
             
             for item in itens_especificos:
                 chave = item.get("data-specification-name")
                 valor = item.get("data-specification-value")
-                
                 if chave and valor:
                     k = self.limpar_texto(chave)
                     v = self.limpar_texto(valor)
-                    
-                    # Evita duplicidade e chaves vazias
                     if k and v:
                         specs[k] = v
 
-            # Se a estratégia acima falhar (site antigo), tenta tabelas
+            # Se não achou do jeito padrão, tenta pegar de tabelas
             if not specs:
                 tables = soup.find_all("table")
                 for table in tables:
@@ -94,6 +109,10 @@ class FrioPecasBot(BaseScraper):
                             k = self.limpar_texto(cols[0].get_text())
                             v = self.limpar_texto(cols[1].get_text())
                             specs[k] = v
+
+            # Se tudo falhar, usa as specs extraídas do texto bagunçado
+            if not specs and specs_texto:
+                specs = specs_texto
 
             # Filtro final de lixo nas specs
             specs = self.filtrar_specs(specs)
