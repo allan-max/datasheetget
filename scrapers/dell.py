@@ -75,35 +75,28 @@ class DellScraper(BaseScraper):
             if not caminho_img_raw or not os.path.exists(caminho_img_raw):
                 print("   [Dell] Download bloqueado pela Dell. Extraindo via screenshot limpo...")
                 try:
-                    # --- DESTRUIDOR DE BANNERS DEFINITIVO ---
-                    print("   [Dell] A aguardar o banner de cookies aparecer para o evaporar...")
-                    time.sleep(3) # Espera crucial para dar tempo de o banner carregar no ecrã
+                    # --- OCULTADOR DE BANNERS (MÉTODO SEGURO VIA CSS) ---
+                    print("   [Dell] A ocultar o banner de cookies via CSS...")
+                    time.sleep(2) # Espera que o banner carregue
                     
                     driver.execute_script("""
-                        // 1. Apaga tudo o que tenha os nomes oficiais da TrustArc / TRUSTe
-                        var seletores = [
-                            '[id*="truste"]', '[class*="truste"]', 
-                            '[id*="trustarc"]', '[class*="trustarc"]',
-                            'iframe[src*="consent"]', '#cookie-consent', 
-                            '#consent_blackbar'
-                        ];
-                        var lixos = document.querySelectorAll(seletores.join(', '));
-                        lixos.forEach(elemento => elemento.remove());
-                        
-                        // 2. Tática de Terra Arrasada: Apaga qualquer flutuante/pop-up que sobreponha a imagem
-                        var todosElementos = document.querySelectorAll('*');
-                        for(var i=0; i < todosElementos.length; i++) {
-                            var estilo = window.getComputedStyle(todosElementos[i]);
-                            // Se está fixo no ecrã e tem um z-index alto (está por cima de tudo), apagamos!
-                            if ((estilo.position === 'fixed' || estilo.position === 'sticky') && estilo.zIndex > 5) {
-                                todosElementos[i].remove();
+                        // Cria uma regra CSS imperativa que esconde o TrustArc sem alterar a estrutura da página
+                        var estilo = document.createElement('style');
+                        estilo.innerHTML = `
+                            iframe[src*="trustarc"], iframe[src*="consent"], 
+                            [id*="trustarc"], [class*="trustarc"],
+                            [id*="truste"], [class*="truste"],
+                            #cookie-consent, #consent_blackbar {
+                                display: none !important;
+                                visibility: hidden !important;
+                                opacity: 0 !important;
+                                pointer-events: none !important;
+                                z-index: -9999 !important;
                             }
-                        }
-                        
-                        // Garante que a rolagem volta a funcionar
-                        document.body.style.overflow = 'auto';
+                        `;
+                        document.head.appendChild(estilo);
                     """)
-                    time.sleep(1) # Dá 1 segundo para o navegador processar a limpeza do ecrã
+                    time.sleep(1.5) # Dá tempo ao navegador para aplicar a invisibilidade
                     # ------------------------------------------------------------------------
 
                     driver.execute_script("window.scrollTo(0, 0);")
