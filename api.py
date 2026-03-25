@@ -3,10 +3,21 @@ from flask import Flask, request, jsonify, send_from_directory
 import threading
 import uuid
 import os
+import sys
 import requests
 import json
 from datetime import datetime
 from scraper_manager import ScraperManager
+
+# --- FORÇAR EXIBIÇÃO DE LOGS NO TERMINAL ---
+os.environ["PYTHONUNBUFFERED"] = "1" 
+os.environ["PYTHONIOENCODING"] = "utf-8"
+
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except:
+    pass
 
 app = Flask(__name__)
 
