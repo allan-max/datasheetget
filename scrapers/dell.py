@@ -5,6 +5,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 import time
+from PIL import Image
 import os
 from .base import BaseScraper
 
@@ -62,9 +63,11 @@ class DellScraper(BaseScraper):
                 if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   [DEBUG] Título: {titulo}")
 
-            # --- IMAGEM (PLANO DUPLO: DOWNLOAD OU SCREENSHOT) ---
+            # --- IMAGEM (PLANO DUPLO COM PROCESSAMENTO DE PILLOW) ---
+            print("   [Dell] Preparando captura inteligente de imagem...")
             url_img = None
-            caminho_imagem = None
+            caminho_imagem_final = None # Este será o JPEG definitivo
+            caminho_img_raw = None # PNG bruto do screenshot
             
             # Prioridade 1: ID da Dell (novo layout)
             img_tag = soup.find("img", attrs={"data-testid": "sharedPolarisHeroPdImage"})
@@ -79,16 +82,21 @@ class DellScraper(BaseScraper):
                 url_img = src
                 print(f"   [Dell] URL da imagem encontrada: {url_img}")
                 
-                # TENTATIVA 1: Baixar a imagem diretamente (mais seguro e invisível)
-                caminho_imagem = self.baixar_imagem_temp(url_img)
+                # TENTATIVA 1: Baixar a imagem diretamente
+                caminho_img_raw = self.baixar_imagem_temp(url_img)
 
             # TENTATIVA 2: Se o download direto falhar, apela para o screenshot da tela
-            if not caminho_imagem or not os.path.exists(caminho_imagem):
-                print("   [Dell] Fazendo screenshot da imagem do produto...")
+            if not caminho_img_raw or not os.path.exists(caminho_img_raw):
+                print("   [Dell] Download falhou. Fazendo screenshot de alta qualidade...")
                 try:
+                    # Rola um pouco para carregar a imagem principal (às vezes é lazy load)
+                    driver.execute_script("window.scrollTo(0, 0);")
+                    
                     el_img = None
+                    # Tenta achar o elemento para screenshot
+                    wait = WebDriverWait(driver, 10)
                     try:
-                        el_img = driver.find_element(By.CSS_SELECTOR, "img[data-testid='sharedPolarisHeroPdImage']")
+                        el_img = wait.until(EC.visibility_of_element_condition_located((By.CSS_SELECTOR, "img[data-testid='sharedPolarisHeroPdImage']")))
                     except:
                         imgs = driver.find_elements(By.TAG_NAME, "img")
                         for img in imgs:
@@ -97,17 +105,61 @@ class DellScraper(BaseScraper):
                                 break
                     
                     if el_img:
-                        filename = f"temp_img_dell_{int(time.time())}.png"
-                        caminho_imagem = os.path.join(self.pasta_saida, filename)
+                        # Gera um nome de arquivo temporário PNG
+                        temp_png = f"raw_dell_{int(time.time())}.png"
+                        caminho_img_raw = os.path.join(self.output_folder, temp_png)
                         
                         # Centraliza para garantir que a imagem não saia cortada
                         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
-                        time.sleep(1.5)
-                        el_img.screenshot(caminho_imagem)
-                        print(f"   ✅ Imagem salva via screenshot!")
+                        time.sleep(1.5) # Espera renderizar o zoom
+                        el_img.screenshot(caminho_img_raw)
+                        print(f"   [Dell] Screenshot capturado com sucesso (PNG)!")
                 except Exception as e:
-                    print(f"   ⚠️ Erro ao salvar imagem: {e}")
+                    print(f"   ⚠️ Erro crítico ao capturar imagem: {e}")
 
+            # === O PULO DO GATO: PROCESSAMENTO DE IMAGEM COM PILLOW ===
+            if camino_img_raw and os.path.exists(caminho_img_raw):
+                try:
+                    print("   [Dell] Processando imagem para JPEG (Word/PDF)...")
+                    # Abre a imagem bruta (PNG do print)
+                    img = Image.open(caminho_img_raw)
+                    
+                    # Converte para RGB (remove transparência do PNG para garantir que não dê erro)
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                        
+                    # Define nome final JPEG
+                    final_jpeg = f"dell_{int(time.time())}.jpg"
+                    caminho_imagem_final = os.path.join(self.output_folder, final_jpeg)
+                    
+                    # Redimensiona mantendo a proporção (máximo 800px de altura para não explodir o PDF)
+                    max_height = 800
+                    if img.height > max_height:
+                        ratio = max_height / float(img.height)
+                        new_width = int(float(img.width) * float(ratio))
+                        img = img.resize((new_width, max_height), Image.Resampling.LANCZOS)
+
+                    # Salva como JPEG com alta qualidade
+                    img.save(caminho_imagem_final, "JPEG", quality=90)
+                    print(f"   ✅ Imagem processada e salva em JPEG!")
+                    
+                    # Fecha o objeto da imagem explicitamente para liberar o Windows
+                    img.close()
+                    
+                    # Tenta deletar o arquivo bruto (PNG) para não poluir a pasta e liberar o bloqueio
+                    time.sleep(0.5) # Pausa micro para garantir a liberação
+                    try:
+                        os.remove(caminho_img_raw)
+                        print("   ✅ Arquivo PNG temporário deletado com sucesso.")
+                    except: pass # Se não der para deletar agora, paciência
+
+                except Exception as pi_err:
+                    print(f"   ❌ Erro ao processar imagem com Pillow: {pi_err}")
+                    # Se falhar o processamento, tenta usar a raw mesmo
+                    caminho_imagem_final = caminho_img_raw
+            else:
+                print("   ⚠️ Aviso: Nenhuma imagem RAW foi capturada.")
+                
             # --- DESCRIÇÃO (ATUALIZADO PARA O NOVO LAYOUT DA DELL) ---
             descricao = "Descrição indisponível."
             
