@@ -94,7 +94,7 @@ class TambasaScraper(BaseScraper):
                 except Exception as e:
                     print(f"   ⚠️ Erro ao salvar imagem: {e}")
 
-           # --- DESCRIÇÃO (COM LIMPEZA PROFUNDA DE LIXO COMERCIAL) ---
+           # --- DESCRIÇÃO (COM LIMPEZA PROFUNDA E REMOÇÃO DE FAQ) ---
             descricao = "Descrição indisponível."
             desc_div = soup.find("div", class_="product-detail__descriptions-text")
             
@@ -103,12 +103,22 @@ class TambasaScraper(BaseScraper):
                 for tag in desc_div(["script", "style", "meta"]):
                     tag.decompose()
                 
-                # 2. Destruidor de parágrafos comerciais (Garantia, Nota Fiscal, etc.)
+                # 1.5. A GUILHOTINA DO FAQ (Corta tudo do FAQ para a frente)
+                # Procura qualquer título que indique o início das perguntas
+                for header in desc_div.find_all(["h2", "h3", "h4", "strong", "p"]):
+                    texto_header = header.get_text().lower()
+                    if "perguntas frequentes" in texto_header or "faq" in texto_header:
+                        # Encontrou o início do FAQ. Apaga todos os elementos que vêm a seguir!
+                        for irmao in header.find_next_siblings():
+                            irmao.decompose()
+                        # Por fim, apaga o próprio título do FAQ
+                        header.decompose()
+                        break # Termina a procura, o corte já foi feito
+                
+                # 2. Destruidor de parágrafos comerciais nas partes que sobraram
                 termos_extras = ["nota fiscal", "faturamento", "condição de pagamento", "faturado", "imposto", "garantia", "boleto", "cartão", "frete"]
                 termos_verificacao = self.termos_proibidos + termos_extras
                 
-                # CORREÇÃO AQUI: Removi a tag "div" para ele não apagar o bloco principal inteiro!
-                # Agora ele só deleta linhas específicas (p, li, h2, h3, h4, span, strong)
                 for el in desc_div.find_all(["p", "li", "h2", "h3", "h4", "span", "strong"]):
                     texto_el = el.get_text().lower()
                     if any(termo in texto_el for termo in termos_verificacao):
