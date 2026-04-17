@@ -116,7 +116,7 @@ class ElginScraper(BaseScraper):
                     if chave and valor:
                         specs[chave] = valor
 
-            # Parte 2: Tópicos de Características (descriptionShort)
+            # Parte 2: Tópicos de Características (descriptionShort) COM FILTRO INDIVIDUAL
             char_div = soup.find("div", class_="descriptionShort")
             if char_div:
                 ul = char_div.find("ul")
@@ -126,10 +126,19 @@ class ElginScraper(BaseScraper):
                     for li in lis:
                         txt = self.limpar_texto(li.get_text())
                         if txt:
-                            lista_destaques.append(f"- {txt}")
+                            # Faz a verificação contra a sua lista de termos proibidos ANTES de adicionar
+                            txt_lower = txt.lower()
+                            tem_lixo = False
+                            for termo in self.termos_proibidos:
+                                if termo in txt_lower:
+                                    tem_lixo = True
+                                    break
+                            
+                            # Se a linha não tiver palavras de garantia/venda, ela entra na lista
+                            if not tem_lixo:
+                                lista_destaques.append(f"- {txt}")
                     
                     if lista_destaques:
-                        # Agrupa todas as "bolinhas" numa única especificação chamada Destaques
                         specs["Principais Características"] = "\n".join(lista_destaques)
             
             # Filtra lixo comercial (Garantia, frete, etc)
