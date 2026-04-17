@@ -1,6 +1,7 @@
 # scrapers/tsshara.py
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
+from selenium.common.exceptions import TimeoutException # <--- IMPORTANTE: Adicionado para tratar o erro
 from bs4 import BeautifulSoup
 import time
 import os
@@ -32,16 +33,25 @@ class TSSharaScraper(BaseScraper):
             
             driver = uc.Chrome(options=options, version_main=109)
             
-            # 1. ACESSO
+            # 1. ACESSO COM TRATAMENTO DE TIMEOUT
             print(f"   [TS Shara] Acessando: {self.url}")
-            driver.set_page_load_timeout(30)
-            driver.get(self.url)
+            driver.set_page_load_timeout(20) # Reduzido para 20s para não atrasar a fila
+            
+            try:
+                driver.get(self.url)
+            except TimeoutException:
+                print("   [TS Shara] Aviso: A página demorou muito, mas vamos forçar a extração do que já carregou!")
+            except Exception as e:
+                print(f"   [TS Shara] Erro de rede ao tentar carregar: {e}")
 
             # Scroll para forçar carregamento das imagens (Lazy Load)
-            driver.execute_script("window.scrollTo(0, 600);")
-            time.sleep(1)
-            driver.execute_script("window.scrollTo(0, 1200);")
-            time.sleep(1.5)
+            try:
+                driver.execute_script("window.scrollTo(0, 600);")
+                time.sleep(1)
+                driver.execute_script("window.scrollTo(0, 1200);")
+                time.sleep(1.5)
+            except:
+                pass # Se falhar o scroll, ignora e segue a vida
 
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
@@ -49,10 +59,8 @@ class TSSharaScraper(BaseScraper):
             titulo = "Produto TS Shara"
             h1 = soup.find("h1", class_="product-title")
             if h1:
-                # Pega todos os spans ignorando o ID interno e as tags <i>
                 spans = h1.find_all("span")
                 if len(spans) > 1:
-                    # O segundo span costuma ter o nome real sem o código "#4502"
                     titulo = self.limpar_texto(spans[1].contents[0] if spans[1].contents else spans[1].get_text())
                 else:
                     titulo = self.limpar_texto(h1.get_text())
@@ -63,12 +71,10 @@ class TSSharaScraper(BaseScraper):
             url_img = None
             caminho_imagem = None
             
-            # Tenta pegar pelo link em alta resolução no href do popup
             a_img = soup.find("a", class_=re.compile(r"popup-image"))
             if a_img and a_img.get("href"):
                 url_img = a_img.get("href")
             else:
-                # Fallback para a tag img normal
                 img_tag = soup.find("img", class_=re.compile(r"litespeed-loaded|lazyloaded"))
                 if img_tag:
                     url_img = img_tag.get("data-src") or img_tag.get("src")
@@ -97,7 +103,6 @@ class TSSharaScraper(BaseScraper):
             descricao = "Descrição indisponível."
             desc_div = soup.find("div", class_="product-content")
             if desc_div:
-                # Remove divs com scripts inúteis que o site injeta
                 for lixo in desc_div.find_all("div", style=re.compile(r"z-index: 2147483647")):
                     lixo.decompose()
                     
@@ -117,15 +122,13 @@ class TSSharaScraper(BaseScraper):
                 tab_div = soup.find("div", class_=re.compile(r"tabs-panel"))
                 
             if tab_div:
-                # DESTRUIDOR DO AVISO "ATENÇÃO / ONDA PWM"
                 nota = tab_div.find("div", class_="product-note")
                 if nota:
-                    nota.decompose() # Evapora este bloco do HTML antes de ler
+                    nota.decompose()
                     
                 lis = tab_div.find_all("li")
                 lista_destaques = []
                 
-                # Termos proibidos extras (além dos do base.py) para TS Shara
                 termos_extras = ["nota fiscal", "faturamento", "condição de pagamento", "faturado", "imposto"]
                 
                 for li in lis:
@@ -134,13 +137,11 @@ class TSSharaScraper(BaseScraper):
                         txt_lower = txt.lower()
                         tem_lixo = False
                         
-                        # Verifica se existe venda, garantia ou pagamento nesta bolinha
                         for termo in self.termos_proibidos + termos_extras:
                             if termo in txt_lower:
                                 tem_lixo = True
                                 break
                         
-                        # Se for limpo, entra no Datasheet
                         if not tem_lixo:
                             lista_destaques.append(f"- {txt}")
                 
