@@ -13,22 +13,23 @@ class CasasBahiaScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Casas Bahia] Iniciando Scraper (Modo Disfarce Avançado)...")
+            print(f"   [Casas Bahia] Iniciando Scraper (Bypass Anti-Bot Definitivo)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
             if not os.path.exists(self.output_folder): 
                 os.makedirs(self.output_folder)
 
-            # --- SETUP COM DISFARCE (User-Agent Spoofing) ---
+            # --- SETUP: A MÁGICA DE TIRAR O HEADLESS ---
             options = uc.ChromeOptions()
-            options.add_argument("--headless=new") 
+            
+            # ❌ REMOVEMOS A OPÇÃO HEADLESS AQUI PARA O CLOUDFLARE NÃO NOS BLOQUEAR
+            
             options.page_load_strategy = 'eager'
             options.add_argument("--no-first-run")
             options.add_argument("--password-store=basic")
-            options.add_argument("--window-size=1920,3000")
             
-            # Força o site a achar que somos um Chrome super atualizado num Windows 10/11
+            # Disfarce de User-Agent
             options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
             
             options.add_argument("--no-sandbox") 
@@ -37,14 +38,19 @@ class CasasBahiaScraper(BaseScraper):
             
             driver = uc.Chrome(options=options, version_main=109)
             
+            # Minimiza a janela para não te atrapalhar visualmente no servidor
+            driver.minimize_window()
+            
             # 1. ACESSO
             print(f"   [Casas Bahia] Acessando: {self.url}")
             driver.set_page_load_timeout(30)
             driver.get(self.url)
 
-            # --- O PULO DO GATO: Espera o Cloudflare/Akamai aprovar a sessão ---
             print("   [Casas Bahia] Aguardando firewall liberar o acesso...")
-            time.sleep(6) # Espera 6 segundos rígidos para o desafio JS do Cloudflare passar
+            time.sleep(6) # Espera o desafio do Cloudflare passar tranquilamente
+
+            # Maximiza a janela momentaneamente apenas para que o Screenshot saia perfeito
+            driver.maximize_window()
 
             print("   [Casas Bahia] Aguardando renderização do produto...")
             try:
@@ -74,9 +80,8 @@ class CasasBahiaScraper(BaseScraper):
             # 3. EXTRAÇÃO
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-            # Verifica se caiu em uma página de bloqueio
             if "verificando se você é humano" in soup.get_text().lower() or "access denied" in soup.get_text().lower():
-                print("   ❌ ERRO CRÍTICO: O robô foi pego no bloqueio da Casas Bahia mesmo com disfarce!")
+                print("   ❌ ERRO CRÍTICO: Bloqueado pelo Cloudflare mesmo na janela visível.")
 
             # --- TÍTULO (UNIVERSAL) ---
             titulo = "Produto Casas Bahia"
