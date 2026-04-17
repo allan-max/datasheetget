@@ -94,12 +94,12 @@ class TambasaScraper(BaseScraper):
                 except Exception as e:
                     print(f"   ⚠️ Erro ao salvar imagem: {e}")
 
-            # --- DESCRIÇÃO (COM LIMPEZA PROFUNDA DE LIXO COMERCIAL) ---
+           # --- DESCRIÇÃO (COM LIMPEZA PROFUNDA DE LIXO COMERCIAL) ---
             descricao = "Descrição indisponível."
             desc_div = soup.find("div", class_="product-detail__descriptions-text")
             
             if desc_div:
-                # 1. Remove códigos ocultos
+                # 1. Remove códigos e scripts ocultos
                 for tag in desc_div(["script", "style", "meta"]):
                     tag.decompose()
                 
@@ -107,16 +107,19 @@ class TambasaScraper(BaseScraper):
                 termos_extras = ["nota fiscal", "faturamento", "condição de pagamento", "faturado", "imposto", "garantia", "boleto", "cartão", "frete"]
                 termos_verificacao = self.termos_proibidos + termos_extras
                 
-                for el in desc_div.find_all(["p", "li", "h2", "h3", "strong", "div"]):
+                # CORREÇÃO AQUI: Removi a tag "div" para ele não apagar o bloco principal inteiro!
+                # Agora ele só deleta linhas específicas (p, li, h2, h3, h4, span, strong)
+                for el in desc_div.find_all(["p", "li", "h2", "h3", "h4", "span", "strong"]):
                     texto_el = el.get_text().lower()
                     if any(termo in texto_el for termo in termos_verificacao):
-                        el.decompose() # Evapora a tag inteira se tiver lixo comercial
+                        el.decompose() # Evapora apenas a frase que tem o lixo comercial
                 
                 # 3. Formata o que sobrou
                 for br in desc_div.find_all("br"):
                     br.replace_with("\n")
                 
-                texto_bruto = desc_div.get_text(separator=" ")
+                # Usa \n como separador para não grudar as frases
+                texto_bruto = desc_div.get_text(separator="\n", strip=True)
                 linhas = [line.strip() for line in texto_bruto.split('\n') if len(line.strip()) > 0]
                 texto_limpo = "\n".join(linhas)
                 

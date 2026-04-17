@@ -79,7 +79,7 @@ SITES_CONFIG = {
         'classe': 'IngramMicroScraper'
     },
     'TAMBASA': {
-        'padroes_url': [r'tambasa\.com', r'loja\.tambasa'],
+        'padroes_url': [r'tambasa\.com'],
         'modulo': 'tambasa',
         'classe': 'TambasaScraper'
     },
