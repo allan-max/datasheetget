@@ -15,11 +15,10 @@ SITES_CONFIG = {
         'padroes_url': [r'amazon\.com', r'amzn\.to'],
         'modulo': 'amazon',
         'classe': 'AmazonScraper'
-    },
-    'ELGIN': {
-        'padroes_url': [r'loja\.elgin\.com\.br', r'elgin\.com\.br'],
-        'modulo': 'elgin',
-        'classe': 'ElginScraper'
+    },'TSSHARA': {
+        'padroes_url': [r'tsshara\.com\.br'],
+        'modulo': 'tsshara',
+        'classe': 'TSSharaScraper'
     },
     'CASAS_BAHIA': {
         'padroes_url': [r'casasbahia\.com\.br'],
