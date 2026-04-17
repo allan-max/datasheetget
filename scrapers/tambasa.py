@@ -1,12 +1,10 @@
 # scrapers/tambasa.py
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 from bs4 import BeautifulSoup
 import time
-import json
+import os
 import re
 from .base import BaseScraper
 
@@ -16,189 +14,168 @@ class TambasaScraper(BaseScraper):
         try:
             print(f"   [Tambasa] Iniciando Scraper...")
             
-            # --- Configuração Anti-Bloqueio ---
-            opts = Options()
-            opts.add_argument("--headless=new") 
-            opts.add_argument("--no-sandbox")
-            opts.add_argument("--disable-dev-shm-usage")
-            opts.add_argument("--window-size=1920,1080")
-            opts.add_argument('--ignore-certificate-errors')
-            opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+            if not hasattr(self, 'output_folder') or not self.output_folder: 
+                self.output_folder = "output"
+            if not os.path.exists(self.output_folder): 
+                os.makedirs(self.output_folder)
 
-            driver = webdriver.Chrome(options=opts)
-            driver.get(self.url)
-
-            # Espera carregar o título principal
+            # --- SETUP (Proteção Server 2012 R2 - V109) ---
+            options = uc.ChromeOptions()
+            options.add_argument("--headless=new") 
+            options.page_load_strategy = 'eager'
+            options.add_argument("--no-first-run")
+            options.add_argument("--password-store=basic")
+            options.add_argument("--window-size=1920,3000")
+            
+            options.add_argument("--no-sandbox") 
+            options.add_argument("--disable-dev-shm-usage") 
+            options.add_argument("--disable-gpu") 
+            
+            driver = uc.Chrome(options=options, version_main=109)
+            
+            # 1. ACESSO COM TRATAMENTO DE TIMEOUT
+            print(f"   [Tambasa] Acessando: {self.url}")
+            driver.set_page_load_timeout(20)
+            
             try:
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "js-product-name-detail"))
-                )
-            except:
-                print("   [Tambasa] Aviso: Timeout esperando título.")
+                driver.get(self.url)
+            except TimeoutException:
+                print("   [Tambasa] Aviso: A página demorou muito, forçando a extração do que já carregou!")
+            except Exception as e:
+                print(f"   [Tambasa] Erro de rede: {e}")
 
-            # Scroll para garantir carregamento de imagens
-            driver.execute_script("window.scrollTo(0, 500);")
-            time.sleep(2)
+            # Scroll rápido para renderizar imagens preguiçosas
+            try:
+                driver.execute_script("window.scrollTo(0, 600);")
+                time.sleep(1)
+            except: pass
 
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-            # --- 1. TÍTULO ---
+            # --- TÍTULO ---
             titulo = "Produto Tambasa"
-            h1 = soup.find("h1", class_="js-product-name-detail")
-            if h1: titulo = self.limpar_texto(h1.get_text())
+            h1 = soup.find("h1", class_=re.compile(r"product-name"))
+            if h1:
+                titulo = self.limpar_texto(h1.get_text())
+            print(f"   ✅ Título capturado: {titulo}")
 
-            # --- 2. IMAGEM ---
+            # --- IMAGEM (PLANO DUPLO COM TRATAMENTO DE URL RELATIVA) ---
+            print("   [Tambasa] Extraindo Imagem...")
             url_img = None
-            img_tag = soup.find("img", class_="js-product-detail__large-image")
+            caminho_imagem = None
+            
+            img_tag = soup.find("img", class_=re.compile(r"product-detail__large-image"))
             if img_tag:
-                src = img_tag.get("src")
+                # Tenta pegar a imagem com zoom (melhor resolução), senão pega o src normal
+                src = img_tag.get("data-zoom-image") or img_tag.get("src")
                 if src:
-                    # O site usa URLs relativas (/imagem/...)
+                    # Se o link começar com '/', precisamos adicionar o domínio base
                     if src.startswith("/"):
-                        url_img = "https://loja.tambasa.com" + src
+                        url_img = "https://tambasa.com" + src
                     else:
                         url_img = src
 
-            # --- 3. DESCRIÇÃO E SPECS (Estratégia Híbrida) ---
-            descricao_bruta = ""
-            specs = {}
+            if url_img:
+                print(f"   [Tambasa] URL da imagem encontrada: {url_img}")
+                caminho_imagem = self.baixar_imagem_temp(url_img)
 
-            # TENTATIVA 1: JSON-LD (Dados estruturados escondidos)
-            # A Tambasa coloca dados muito bons dentro de tags <script type="application/ld+json">
-            scripts_json = soup.find_all("script", type="application/ld+json")
-            for script in scripts_json:
+            if not caminho_imagem or not os.path.exists(caminho_imagem):
+                print("   [Tambasa] Apelando para captura de tela da imagem...")
                 try:
-                    data = json.loads(script.string)
-                    # Verifica se é uma lista ou dict
-                    if isinstance(data, dict):
-                         data = [data]
-                    
-                    for item in data:
-                        # Pega descrição do JSON
-                        if "description" in item and not descricao_bruta:
-                            descricao_bruta = item["description"]
-                        
-                        # Pega specs do JSON (alguns produtos tem campo 'specifications')
-                        if "specifications" in item:
-                             for k, v in item["specifications"].items():
-                                 specs[k] = v
-                except: pass
+                    driver.execute_script("window.scrollTo(0, 0);")
+                    el_img = driver.find_element(By.CSS_SELECTOR, "img.product-detail__large-image")
+                    if el_img:
+                        filename = f"temp_img_tambasa_{int(time.time())}.png"
+                        caminho_imagem = os.path.join(self.output_folder, filename)
+                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
+                        time.sleep(1.5)
+                        el_img.screenshot(caminho_imagem)
+                        print("   ✅ Imagem salva via screenshot!")
+                except Exception as e:
+                    print(f"   ⚠️ Erro ao salvar imagem: {e}")
 
-            # TENTATIVA 2: HTML Visual (Fallback)
-            if not descricao_bruta:
-                desc_container = soup.find("div", class_="product-detail__descriptions-text")
-                if desc_container:
-                    # Remove scripts e estilos de dentro
-                    for tag in desc_container(["script", "style"]): tag.extract()
-                    descricao_bruta = desc_container.get_text(separator="\n")
+            # --- DESCRIÇÃO (COM LIMPEZA PROFUNDA DE LIXO COMERCIAL) ---
+            descricao = "Descrição indisponível."
+            desc_div = soup.find("div", class_="product-detail__descriptions-text")
+            
+            if desc_div:
+                # 1. Remove códigos ocultos
+                for tag in desc_div(["script", "style", "meta"]):
+                    tag.decompose()
+                
+                # 2. Destruidor de parágrafos comerciais (Garantia, Nota Fiscal, etc.)
+                termos_extras = ["nota fiscal", "faturamento", "condição de pagamento", "faturado", "imposto", "garantia", "boleto", "cartão", "frete"]
+                termos_verificacao = self.termos_proibidos + termos_extras
+                
+                for el in desc_div.find_all(["p", "li", "h2", "h3", "strong", "div"]):
+                    texto_el = el.get_text().lower()
+                    if any(termo in texto_el for termo in termos_verificacao):
+                        el.decompose() # Evapora a tag inteira se tiver lixo comercial
+                
+                # 3. Formata o que sobrou
+                for br in desc_div.find_all("br"):
+                    br.replace_with("\n")
+                
+                texto_bruto = desc_div.get_text(separator=" ")
+                linhas = [line.strip() for line in texto_bruto.split('\n') if len(line.strip()) > 0]
+                texto_limpo = "\n".join(linhas)
+                
+                descricao = self.limpar_lixo_comercial(texto_limpo)
 
-            # --- 4. LIMPEZA CIRÚRGICA DA DESCRIÇÃO ---
-            # Remove frases específicas de garantia, preço, etc, mas mantém o resto.
-            descricao = self.limpar_descricao_cirurgica(descricao_bruta)
-
-            # --- 5. FICHA TÉCNICA (Complementar) ---
-            # Busca as caixas de atributos visuais
-            # Container: product-detail__descriptions-attributes
+            # --- FICHA TÉCNICA (ATRIBUTOS) ---
+            specs = {}
             attr_container = soup.find("div", class_="product-detail__descriptions-attributes")
+            
             if attr_container:
-                items = attr_container.find_all("div", class_="product-detail__attribute")
-                for item in items:
-                    lbl = item.find("span", class_="product-detail__attribute-title")
-                    val = item.find("span", class_="product-detail__attribute-text")
+                atributos = attr_container.find_all("div", class_="product-detail__attribute")
+                for attr in atributos:
+                    title_span = attr.find("span", class_="product-detail__attribute-title")
                     
-                    # Às vezes o valor é um link
-                    if not val:
-                        val = item.find("a", class_="product-detail__attribute-text")
+                    # O valor pode estar num span ou numa tag <a> (como a marca)
+                    text_span = attr.find("span", class_="product-detail__attribute-text")
+                    if not text_span:
+                        text_span = attr.find("a", class_=re.compile(r"product-detail__attribute-text"))
+                        
+                    if title_span and text_span:
+                        chave = self.limpar_texto(title_span.get_text())
+                        valor = self.limpar_texto(text_span.get_text())
+                        
+                        # Passa pelo filtro final contra vendas/garantia
+                        ignorar = False
+                        for termo in termos_verificacao:
+                            if termo in chave.lower() or termo in valor.lower():
+                                ignorar = True
+                                break
+                                
+                        if not ignorar and chave and valor:
+                            specs[chave] = valor
+                            
+            print(f"   ✅ Especificações filtradas e capturadas: {len(specs)} itens.")
 
-                    if lbl and val:
-                        k = self.limpar_texto(lbl.get_text())
-                        v = self.limpar_texto(val.get_text())
-                        if k and v:
-                            specs[k] = v
-
-            # Filtra specs indesejadas
-            specs = self.filtrar_specs_tambasa(specs)
-
+            # --- FINALIZAÇÃO ---
             dados = {
                 "titulo": titulo,
                 "descricao": descricao,
                 "caracteristicas": specs,
-                "caminho_imagem_temp": self.baixar_imagem_temp(url_img)
+                "caminho_imagem_temp": caminho_imagem
             }
-
+            
+            print("   [Tambasa] Gerando arquivos finais...")
             arquivos = self.gerar_arquivos_finais(dados)
-
+            
             return {
                 'sucesso': True,
                 'titulo': titulo,
                 'descricao': descricao,
                 'caracteristicas': specs,
-                'total_imagens': 1,
+                'total_imagens': 1 if caminho_imagem else 0,
                 'arquivos': arquivos
             }
 
         except Exception as e:
-            print(f"   [ERRO TAMBASA] {e}")
+            print(f"   ❌ [ERRO TAMBASA] {e}")
             return {'sucesso': False, 'erro': str(e)}
         finally:
             if driver:
-                driver.quit()
-
-    def limpar_descricao_cirurgica(self, texto_bruto):
-        """
-        Divide o texto em frases. Analisa uma por uma.
-        Se a frase tiver palavras proibidas (garantia, preço, loja, telefone), ela é deletada.
-        O resto do texto é mantido.
-        """
-        if not texto_bruto: return "Descrição indisponível."
-
-        # Limpa espaços excessivos primeiro
-        texto_limpo = re.sub(r'\s+', ' ', texto_bruto).strip()
-        
-        # Divide por pontuação (. ! ?) mantendo a pontuação para reconstruir
-        # O regex abaixo divide frases preservando o delimitador
-        frases = re.split(r'(?<=[.!?])\s+', texto_limpo)
-        
-        frases_aprovadas = []
-        
-        termos_proibidos = [
-            "garantia", "meses de garantia", "assistência técnica", 
-            "consulte o site", "atendimento", "sac", "telefone", 
-            "loja", "tambasa", "preço", "oferta", "frete", "entrega",
-            "condições de pagamento", "boleto", "cartão", "estoque",
-            "vendido por", "entregue por", "cnpj", "endereço",
-            "www.", ".com.br", "origem", "importado"
-        ]
-
-        for frase in frases:
-            frase_lower = frase.lower()
-            contem_proibido = False
-            
-            for termo in termos_proibidos:
-                if termo in frase_lower:
-                    contem_proibido = True
-                    break
-            
-            # Regra extra: Se a frase for muito curta e parecer lixo (ex: "EAN")
-            if len(frase) < 4:
-                contem_proibido = True
-
-            if not contem_proibido:
-                frases_aprovadas.append(frase)
-
-        return "\n\n".join(frases_aprovadas)
-
-    def filtrar_specs_tambasa(self, specs):
-        """Filtro específico para remover dados logísticos da Tambasa"""
-        specs_limpas = {}
-        ignorar = [
-            "ean", "código", "origem", "embalagem", "quantidade", 
-            "ncm", "peso bruto", "peso liquido", "dun", "sku", 
-            "garantia", "marca" # Marca já costuma ir no título
-        ]
-        
-        for k, v in specs.items():
-            k_lower = k.lower()
-            if not any(x in k_lower for x in ignorar):
-                specs_limpas[k] = v
-        return specs_limpas
+                try: driver.quit()
+                except: pass
