@@ -26,7 +26,7 @@ class CasasBahiaScraper(BaseScraper):
             options.page_load_strategy = 'eager'
             options.add_argument("--no-first-run")
             options.add_argument("--password-store=basic")
-            options.add_argument("--window-size=1920,3000") # Tela mais longa para caber tudo
+            options.add_argument("--window-size=1920,3000")
             
             options.add_argument("--no-sandbox") 
             options.add_argument("--disable-dev-shm-usage") 
@@ -39,39 +39,40 @@ class CasasBahiaScraper(BaseScraper):
             driver.set_page_load_timeout(30)
             driver.get(self.url)
 
-            # Scroll em etapas para forçar o carregamento dinâmico (Lazy Load)
+            # --- ESPERA OBRIGATÓRIA (Garante que a página React carregou) ---
+            print("   [Casas Bahia] Aguardando renderização da página...")
+            try:
+                WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
+            except:
+                print("   ⚠️ Aviso: Demora no carregamento do título, forçando continuação.")
+
+            # Scroll em etapas para forçar o carregamento dinâmico
             driver.execute_script("window.scrollTo(0, 500);")
             time.sleep(1)
-            driver.execute_script("window.scrollTo(0, 1200);")
-            time.sleep(1)
-            driver.execute_script("window.scrollTo(0, 2000);")
+            driver.execute_script("window.scrollTo(0, 1500);")
             time.sleep(1)
 
-            # 2. INTERAÇÃO (CLICAR NAS SANFONAS)
+            # 2. INTERAÇÃO (CLIQUE AGRESSIVO NAS SANFONAS VIA JS)
             print("   [Casas Bahia] Abrindo menus de Descrição e Ficha Técnica...")
-            try:
-                # Tenta achar e clicar no botão de Descrição
-                desc_btns = driver.find_elements(By.XPATH, "//p[contains(text(), 'Descrição do produto')]/parent::button | //p[contains(text(), 'Descrição do produto')]")
-                for btn in desc_btns:
-                    driver.execute_script("arguments[0].click();", btn)
-                
-                time.sleep(1) # Espera a animação abrir
-                
-                # Tenta achar e clicar no botão de Especificações
-                specs_btns = driver.find_elements(By.XPATH, "//p[contains(text(), 'Especificações Técnicas')]/parent::button | //p[contains(text(), 'Especificações Técnicas')]")
-                for btn in specs_btns:
-                    driver.execute_script("arguments[0].click();", btn)
-                    
-                time.sleep(1.5) # Espera os dados carregarem no HTML
-            except Exception as e:
-                print(f"   ⚠️ Aviso: Não foi possível clicar nos botões, tentando ler o que já está na tela.")
+            driver.execute_script("""
+                // Procura por qualquer texto na página que seja os botões de sanfona e clica neles
+                var elementos = document.querySelectorAll('p, span, div, button');
+                for (var i = 0; i < elementos.length; i++) {
+                    var texto = elementos[i].innerText || "";
+                    if (texto.includes('Descrição do produto') || texto.includes('Especificações Técnicas')) {
+                        try { elementos[i].click(); } catch(e) {}
+                    }
+                }
+            """)
+            time.sleep(2) # Espera crucial para o texto aparecer no HTML após o clique
 
             # 3. EXTRAÇÃO
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-            # --- TÍTULO ---
+            # --- TÍTULO (UNIVERSAL) ---
             titulo = "Produto Casas Bahia"
-            h1 = soup.find("h1", class_=re.compile(r"dsvia-heading"))
+            # Ignora a classe e pega direto o h1
+            h1 = soup.find("h1")
             if h1:
                 titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
@@ -81,25 +82,17 @@ class CasasBahiaScraper(BaseScraper):
             url_img = None
             caminho_imagem = None
             
-            # Busca a imagem principal pela tag 'data-testid'
             img_tag = soup.find("img", attrs={"data-testid": "gallery-image"})
             if img_tag and img_tag.get("src"):
                 url_img = img_tag.get("src")
                 print(f"   [Casas Bahia] URL da imagem encontrada: {url_img}")
-                
-                # Tentativa 1: Download Oculto
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
-            # Tentativa 2: Screenshot Direto
             if not caminho_imagem or not os.path.exists(caminho_imagem):
                 print("   [Casas Bahia] Apelando para o Screenshot da imagem...")
                 try:
-                    el_img = None
-                    try:
-                        el_img = driver.find_element(By.CSS_SELECTOR, "img[data-testid='gallery-image']")
-                    except:
-                        pass
-                    
+                    driver.execute_script("window.scrollTo(0, 0);")
+                    el_img = driver.find_element(By.CSS_SELECTOR, "img[data-testid='gallery-image']")
                     if el_img:
                         filename = f"temp_img_cb_{int(time.time())}.png"
                         caminho_imagem = os.path.join(self.output_folder, filename)
@@ -114,26 +107,28 @@ class CasasBahiaScraper(BaseScraper):
             # --- DESCRIÇÃO ---
             descricao = "Descrição indisponível."
             desc_div = soup.find("div", id="product-description")
+            # Fallback caso mudem o ID
+            if not desc_div:
+                desc_div = soup.find("div", attrs={"data-testid": re.compile(r"description", re.I)})
+
             if desc_div:
-                # Troca <br> por quebras de linha reais
                 for br in desc_div.find_all("br"):
                     br.replace_with("\n")
                 
-                # O separator=' ' evita que as tags <strong> fiquem grudadas com o texto normal
                 texto_bruto = desc_div.get_text(separator=" ")
                 linhas = [line.strip() for line in texto_bruto.split('\n') if len(line.strip()) > 0]
                 texto_limpo = "\n".join(linhas)
                 
                 descricao = self.limpar_lixo_comercial(texto_limpo)
+                print("   ✅ Descrição capturada com sucesso.")
 
             # --- FICHA TÉCNICA ---
             specs = {}
-            # Baseado no seu HTML, a Casas Bahia coloca cada linha num display flex com 'dsvia-base-div'
             linhas_specs = soup.find_all("div", attrs={"display": "flex", "data-testid": "dsvia-base-div"})
             
             for linha in linhas_specs:
-                p_tag = linha.find("p") # Chave (ex: Conectividade)
-                span_tag = linha.find("span") # Valor (ex: Bluetooth, Wi-Fi)
+                p_tag = linha.find("p") 
+                span_tag = linha.find("span")
                 
                 if p_tag and span_tag:
                     chave = self.limpar_texto(p_tag.get_text())
@@ -142,7 +137,6 @@ class CasasBahiaScraper(BaseScraper):
                     if chave and valor:
                         specs[chave] = valor
             
-            # Passa no seu filtro contra a palavra "garantia" e lixos comerciais
             specs = self.filtrar_specs(specs)
             print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
