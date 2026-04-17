@@ -13,20 +13,23 @@ class CasasBahiaScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Casas Bahia] Iniciando Scraper...")
+            print(f"   [Casas Bahia] Iniciando Scraper (Modo Disfarce Avançado)...")
             
-            # --- SETUP (Proteção Server 2012 R2) ---
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
             if not os.path.exists(self.output_folder): 
                 os.makedirs(self.output_folder)
 
+            # --- SETUP COM DISFARCE (User-Agent Spoofing) ---
             options = uc.ChromeOptions()
             options.add_argument("--headless=new") 
             options.page_load_strategy = 'eager'
             options.add_argument("--no-first-run")
             options.add_argument("--password-store=basic")
             options.add_argument("--window-size=1920,3000")
+            
+            # Força o site a achar que somos um Chrome super atualizado num Windows 10/11
+            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
             
             options.add_argument("--no-sandbox") 
             options.add_argument("--disable-dev-shm-usage") 
@@ -39,23 +42,25 @@ class CasasBahiaScraper(BaseScraper):
             driver.set_page_load_timeout(30)
             driver.get(self.url)
 
-            # --- ESPERA OBRIGATÓRIA (Garante que a página React carregou) ---
-            print("   [Casas Bahia] Aguardando renderização da página...")
+            # --- O PULO DO GATO: Espera o Cloudflare/Akamai aprovar a sessão ---
+            print("   [Casas Bahia] Aguardando firewall liberar o acesso...")
+            time.sleep(6) # Espera 6 segundos rígidos para o desafio JS do Cloudflare passar
+
+            print("   [Casas Bahia] Aguardando renderização do produto...")
             try:
-                WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
+                WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
             except:
-                print("   ⚠️ Aviso: Demora no carregamento do título, forçando continuação.")
+                print("   ⚠️ Aviso: Título demorou, possível bloqueio ou lentidão extrema mantida.")
 
             # Scroll em etapas para forçar o carregamento dinâmico
             driver.execute_script("window.scrollTo(0, 500);")
-            time.sleep(1)
+            time.sleep(1.5)
             driver.execute_script("window.scrollTo(0, 1500);")
-            time.sleep(1)
+            time.sleep(1.5)
 
             # 2. INTERAÇÃO (CLIQUE AGRESSIVO NAS SANFONAS VIA JS)
             print("   [Casas Bahia] Abrindo menus de Descrição e Ficha Técnica...")
             driver.execute_script("""
-                // Procura por qualquer texto na página que seja os botões de sanfona e clica neles
                 var elementos = document.querySelectorAll('p, span, div, button');
                 for (var i = 0; i < elementos.length; i++) {
                     var texto = elementos[i].innerText || "";
@@ -64,14 +69,17 @@ class CasasBahiaScraper(BaseScraper):
                     }
                 }
             """)
-            time.sleep(2) # Espera crucial para o texto aparecer no HTML após o clique
+            time.sleep(2) 
 
             # 3. EXTRAÇÃO
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
+            # Verifica se caiu em uma página de bloqueio
+            if "verificando se você é humano" in soup.get_text().lower() or "access denied" in soup.get_text().lower():
+                print("   ❌ ERRO CRÍTICO: O robô foi pego no bloqueio da Casas Bahia mesmo com disfarce!")
+
             # --- TÍTULO (UNIVERSAL) ---
             titulo = "Produto Casas Bahia"
-            # Ignora a classe e pega direto o h1
             h1 = soup.find("h1")
             if h1:
                 titulo = self.limpar_texto(h1.get_text())
@@ -107,7 +115,6 @@ class CasasBahiaScraper(BaseScraper):
             # --- DESCRIÇÃO ---
             descricao = "Descrição indisponível."
             desc_div = soup.find("div", id="product-description")
-            # Fallback caso mudem o ID
             if not desc_div:
                 desc_div = soup.find("div", attrs={"data-testid": re.compile(r"description", re.I)})
 
