@@ -83,6 +83,16 @@ SITES_CONFIG = {
         'modulo': 'tambasa',
         'classe': 'TambasaScraper'
     },
+    'MADEIRA_MADEIRA': {
+        'padroes_url': [r'madeiramadeira\.com\.br'],
+        'modulo': 'madeiramadeira',
+        'classe': 'MadeiraMadeiraScraper'
+    },
+    'LEROY_MERLIN': {
+        'padroes_url': [r'leroymerlin\.com\.br'],
+        'modulo': 'leroymerlin',
+        'classe': 'LeroyMerlinScraper'
+    },
     'FRIGELAR': {
         'padroes_url': [r'frigelar\.com\.br'],
         'modulo': 'frigelar',
