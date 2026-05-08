@@ -1,24 +1,34 @@
 # scrapers/mercado_livre.py
 import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 import time
 import os
+import re
 from .base import BaseScraper
 
 class MercadoLivreScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [ML] Iniciando Scraper (Modo Indetectável)...")
+            print(f"   [ML] Iniciando Scraper (Bypass e Espera Inteligente)...")
             
-            # --- SETUP DO CHROME FANTASMA (Proteção Server 2012 R2) ---
+            if not hasattr(self, 'output_folder') or not self.output_folder: 
+                self.output_folder = "output"
+            if not os.path.exists(self.output_folder): 
+                os.makedirs(self.output_folder)
+
+            # --- SETUP: A MÁGICA DE TIRAR O HEADLESS ---
             options = uc.ChromeOptions()
-            options.add_argument("--headless=new") 
             options.page_load_strategy = 'eager'
             options.add_argument("--no-first-run")
             options.add_argument("--password-store=basic")
             options.add_argument("--disable-http2")
-            options.add_argument("--window-size=1920,1080")
+            
+            # Disfarce de User-Agent
+            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
             
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
@@ -26,54 +36,110 @@ class MercadoLivreScraper(BaseScraper):
             
             # version_main=109 é CRÍTICO para o seu Windows Server 2012 R2
             driver = uc.Chrome(options=options, version_main=109)
+            driver.minimize_window() # Minimiza a janela para não te atrapalhar
             
             print(f"   [ML] Acessando: {self.url}")
             driver.set_page_load_timeout(30)
             driver.get(self.url)
             
-            # Dá um tempinho para o Mercado Livre carregar o conteúdo dinâmico
-            time.sleep(2)
+            # --- ESPERA INTELIGENTE (Substitui o time.sleep fixo) ---
+            print("   [ML] Aguardando renderização do produto...")
+            try:
+                # O robô vai esperar até 15 segundos APENAS se precisar. 
+                # Se o H1 carregar em 1 segundo, ele já avança imediatamente.
+                WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
+            except:
+                print("   ⚠️ Aviso: O carregamento demorou muito. Forçando a leitura do HTML atual.")
             
-            # Passa o HTML carregado pelo navegador real para o BeautifulSoup
+            # Scroll para forçar carregamento de Imagens e Descrição (Lazy Load)
+            driver.execute_script("window.scrollTo(0, 800);")
+            time.sleep(1)
+            driver.execute_script("window.scrollTo(0, 2500);")
+            time.sleep(1.5)
+
             soup = BeautifulSoup(driver.page_source, 'html.parser')
+            
+            if "verifique que você não é um robô" in soup.get_text().lower() or "recaptcha" in soup.get_text().lower():
+                print("   ❌ ERRO CRÍTICO: Bloqueado pelo Captcha do Mercado Livre.")
 
-            # --- TÍTULO ---
-            h1 = soup.find('h1', class_='ui-pdp-title')
-            titulo = h1.text.strip() if h1 else "Produto Mercado Livre"
+            # --- TÍTULO (Busca Universal com Regex) ---
+            titulo = "Produto Mercado Livre"
+            # Procura qualquer h1 que tenha 'ui-pdp-title' em qualquer parte da classe
+            h1 = soup.find('h1', class_=re.compile(r'ui-pdp-title'))
+            if not h1:
+                # Fallback agressivo: pega o primeiro H1 da tela
+                h1 = soup.find('h1')
+            
+            if h1:
+                titulo = self.limpar_texto(h1.get_text())
+            print(f"   ✅ Título capturado: {titulo}")
 
-            # --- DESCRIÇÃO (COM LIMPEZA) ---
-            desc_elem = soup.find('p', class_='ui-pdp-description__content')
-            descricao_bruta = desc_elem.text if desc_elem else ""
-            descricao = self.limpar_lixo_comercial(descricao_bruta)
+            # --- DESCRIÇÃO (Busca Flexível) ---
+            descricao = "Descrição indisponível."
+            desc_elem = soup.find('p', class_=re.compile(r'ui-pdp-description__content'))
+            if desc_elem:
+                # Troca <br> por quebras de linha
+                for br in desc_elem.find_all("br"):
+                    br.replace_with("\n")
+                descricao_bruta = desc_elem.get_text(separator="\n", strip=True)
+                descricao = self.limpar_lixo_comercial(descricao_bruta)
 
-            # --- IMAGEM ---
+            # --- IMAGEM (Downloads e Screenshot Fallback) ---
+            print("   [ML] Extraindo Imagem...")
             url_img = None
+            caminho_imagem = None
+            
             meta_img = soup.find('meta', property='og:image')
             if meta_img and meta_img.get('content'):
                 url_img = meta_img['content']
             else:
-                img_container = soup.find('img', class_='ui-pdp-image')
+                img_container = soup.find('img', class_=re.compile(r'ui-pdp-image'))
                 if img_container:
                     src = img_container.get('src')
                     if src and "http" in src: url_img = src
 
-            # --- CARACTERÍSTICAS ---
+            if url_img:
+                print(f"   [ML] URL da imagem encontrada: {url_img}")
+                caminho_imagem = self.baixar_imagem_temp(url_img)
+
+            # Se o Mercado Livre bloquear o download da imagem, tira print dela limpa
+            if not caminho_imagem or not os.path.exists(caminho_imagem):
+                print("   [ML] Apelando para o Screenshot da imagem principal...")
+                try:
+                    driver.execute_script("window.scrollTo(0, 0);")
+                    el_img = driver.find_element(By.CSS_SELECTOR, "figure.ui-pdp-gallery__figure img, img.ui-pdp-image")
+                    if el_img:
+                        filename = f"temp_img_ml_{int(time.time())}.png"
+                        caminho_imagem = os.path.join(self.output_folder, filename)
+                        
+                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
+                        time.sleep(1)
+                        el_img.screenshot(caminho_imagem)
+                        print("   ✅ Imagem salva via screenshot!")
+                except Exception as e:
+                    print(f"   ⚠️ Erro ao salvar imagem: {e}")
+
+            # --- CARACTERÍSTICAS (Tabela Flexível) ---
             specs = {}
-            rows = soup.find_all('tr', class_='andes-table__row')
+            rows = soup.find_all('tr', class_=re.compile(r'andes-table__row'))
             for row in rows:
                 th = row.find('th')
                 td = row.find('td')
                 if th and td:
-                    specs[th.text.strip()] = td.text.strip()
+                    chave = self.limpar_texto(th.get_text())
+                    valor = self.limpar_texto(td.get_text())
+                    if chave and valor:
+                        specs[chave] = valor
             
             specs = self.filtrar_specs(specs)
+            print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
             # --- FINALIZAÇÃO ---
             dados = {
                 "titulo": titulo,
                 "descricao": descricao,
                 "caracteristicas": specs,
-                "caminho_imagem_temp": self.baixar_imagem_temp(url_img)
+                "caminho_imagem_temp": caminho_imagem
             }
 
             print("   [ML] Gerando arquivos PDF/Word...")
@@ -84,7 +150,7 @@ class MercadoLivreScraper(BaseScraper):
                 'titulo': titulo,
                 'descricao': descricao,
                 'caracteristicas': specs,
-                'total_imagens': 1,
+                'total_imagens': 1 if caminho_imagem else 0,
                 'arquivos': arquivos
             }
 
