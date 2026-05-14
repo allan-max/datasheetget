@@ -13,7 +13,7 @@ class MercadoLivreScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [ML] Iniciando Scraper (Modo Catálogo Avançado)...")
+            print(f"   [ML] Iniciando Scraper (Catálogo Ultimate V5)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -39,34 +39,34 @@ class MercadoLivreScraper(BaseScraper):
             driver.set_page_load_timeout(30)
             driver.get(self.url)
             
-            print("   [ML] Aguardando renderização do produto...")
-            time.sleep(3) # Tempo inicial para o Javascript base montar a página
+            print("   [ML] Aguardando renderização inicial...")
+            try:
+                WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
+            except:
+                pass
             
-            # --- 1. ROLAGEM DUPLA (Lazy Load) ---
-            print("   [ML] Forçando o carregamento das seções ocultas...")
-            driver.execute_script("window.scrollTo(0, 800);")
-            time.sleep(1)
-            driver.execute_script("window.scrollTo(0, 2000);")
-            time.sleep(1)
-            driver.execute_script("window.scrollTo(0, 3500);")
-            time.sleep(1)
+            # --- 1. ROLAGEM FORÇADA ---
+            print("   [ML] Vasculhando a página para carregar elementos ocultos...")
+            for i in range(4):
+                driver.execute_script("window.scrollBy(0, 800);")
+                time.sleep(1)
             
-            # --- 2. CLIQUE EM "VER MAIS" (Essencial para links /up/ de Catálogo) ---
+            # --- 2. DESTRUIDOR DE BOTÕES DE CATÁLOGO (Ver Todas as Características) ---
+            print("   [ML] Clicando nos botões de expansão de ficha técnica...")
             driver.execute_script("""
-                // Procura botões de 'Ver todas as características' ou 'Descrição completa'
                 var botoes = document.querySelectorAll('button, a, span');
                 for (var i = 0; i < botoes.length; i++) {
                     var texto = botoes[i].innerText.toLowerCase();
                     if (texto.includes('ver todas as características') || 
+                        texto.includes('características completas') || 
                         texto.includes('mostrar mais') || 
                         texto.includes('mais características')) {
                         try { botoes[i].click(); } catch(e) {}
                     }
                 }
             """)
-            time.sleep(2) # Espera a janela de especificações abrir e popular o HTML
+            time.sleep(2.5) # Pausa maior para garantir que a janela modal de Specs abriu
             
-            # Rola para o topo para garantir que o print de tela saia certo
             driver.execute_script("window.scrollTo(0, 300);")
             time.sleep(0.5)
 
@@ -75,37 +75,35 @@ class MercadoLivreScraper(BaseScraper):
             # --- TÍTULO ---
             titulo = "Produto Mercado Livre"
             h1 = soup.find('h1', class_=re.compile(r'ui-pdp-title'))
-            if not h1:
-                h1 = soup.find('h1')
-            if h1:
-                titulo = self.limpar_texto(h1.get_text())
+            if not h1: h1 = soup.find('h1')
+            if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- DESCRIÇÃO (Modo Força Bruta) ---
+            # --- DESCRIÇÃO (Estratégia Blindada para Catálogo) ---
             descricao = "Descrição indisponível."
             desc_elem = soup.find(['p', 'div', 'span'], class_=re.compile(r'ui-pdp-description__content'))
             
             if not desc_elem:
                 desc_elem = soup.find('div', class_=re.compile(r'ui-pdp-description'))
                 
-            # Se ainda falhar, procura literalmente a palavra "Descrição" nos cabeçalhos e apanha o bloco seguinte
+            # Caçador agressivo pela palavra "Descrição" nos cabeçalhos
             if not desc_elem or len(desc_elem.get_text(strip=True)) < 15:
-                h_desc = soup.find(lambda tag: tag.name in ["h2", "h3", "div", "p"] and tag.text and "Descrição" in tag.text.strip())
-                if h_desc:
-                    desc_elem = h_desc.find_next_sibling()
-                    if not desc_elem or len(desc_elem.get_text(strip=True)) < 5:
-                        desc_elem = h_desc.parent # Pega o bloco inteiro como último recurso
+                for h in soup.find_all(['h2', 'h3', 'p', 'div']):
+                    if "descrição" in h.get_text().lower() and len(h.get_text(strip=True)) < 20:
+                        desc_elem = h.find_next_sibling()
+                        if desc_elem and len(desc_elem.get_text(strip=True)) > 10:
+                            break
 
             if desc_elem:
                 for br in desc_elem.find_all("br"):
                     br.replace_with("\n")
-                
                 descricao_bruta = desc_elem.get_text(separator="\n", strip=True)
+                
                 if len(descricao_bruta) > 10:
                     descricao = self.limpar_lixo_comercial(descricao_bruta)
                     print("   ✅ Descrição capturada e limpa.")
                 else:
-                    print("   ⚠️ Aviso: Bloco de descrição encontrado, mas texto estava vazio.")
+                    print("   ⚠️ Aviso: Bloco de descrição vazio ou ausente nesta página de catálogo.")
 
             # --- IMAGEM ---
             print("   [ML] Extraindo Imagem...")
@@ -138,15 +136,15 @@ class MercadoLivreScraper(BaseScraper):
                         time.sleep(1)
                         el_img.screenshot(caminho_imagem)
                         print("   ✅ Imagem salva via screenshot!")
-                except Exception as e:
-                    print(f"   ⚠️ Erro ao salvar imagem: {e}")
+                except:
+                    pass
 
-            # --- CARACTERÍSTICAS (Extração Universal) ---
+            # --- CARACTERÍSTICAS (O Pesadelo do Catálogo Resolvido) ---
             specs = {}
             
-            # Estratégia 1: Tabelas HTML puras (padrão antigo e alguns novos)
-            rows = soup.find_all('tr')
-            for row in rows:
+            # TENTATIVA 1: Tabelas Andes e VPP (Tabelas Reais)
+            linhas_tabela = soup.find_all('tr', class_=re.compile(r'andes-table__row|ui-vpp-striped-specs__row|ui-pdp-specs__table-row'))
+            for row in linhas_tabela:
                 th = row.find(['th', 'td'], class_=re.compile(r'andes-table__header|ui-pdp-specs__row-title'))
                 if not th: th = row.find('th')
                 
@@ -159,12 +157,11 @@ class MercadoLivreScraper(BaseScraper):
                     if chave and valor and chave != valor:
                         specs[chave] = valor
 
-            # Estratégia 2: Estrutura baseada em DIVs (Layout de Catálogo Moderno)
+            # TENTATIVA 2: Layout Baseado em Divs (Se a Tabela Falhar)
             if len(specs) < 2:
-                div_rows = soup.find_all('div', class_=re.compile(r'ui-pdp-specs__row|ui-vpp-striped-specs__row|andes-table__row'))
-                for row in div_rows:
-                    # Extrai os textos. Geralmente a chave é a primeira div/span e o valor é a última.
-                    textos = row.find_all(['span', 'p', 'div', 'th', 'td'])
+                linhas_div = soup.find_all('div', class_=re.compile(r'ui-pdp-specs__row|ui-vpp-striped-specs__row'))
+                for row in linhas_div:
+                    textos = row.find_all(['span', 'p', 'div'])
                     if len(textos) >= 2:
                         chave = self.limpar_texto(textos[0].get_text())
                         valor = self.limpar_texto(textos[-1].get_text())
