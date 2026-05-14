@@ -13,7 +13,7 @@ class MercadoLivreScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [ML] Iniciando Scraper (Motor de Extração Visual V6)...")
+            print(f"   [ML] Iniciando Scraper (Motor de Catálogo V7 - Adaptação Highlighted Specs)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -51,13 +51,14 @@ class MercadoLivreScraper(BaseScraper):
                 driver.execute_script("window.scrollBy(0, 800);")
                 time.sleep(1)
             
-            # --- 2. DESTRUIDOR DE BOTÕES DE CATÁLOGO (Ver Todas as Características) ---
+            # --- 2. DESTRUIDOR DE BOTÕES DE CATÁLOGO (Atualizado com "Conferir") ---
             print("   [ML] Clicando nos botões de expansão de ficha técnica...")
             driver.execute_script("""
                 var botoes = document.querySelectorAll('button, a, span');
                 for (var i = 0; i < botoes.length; i++) {
                     var texto = botoes[i].innerText.toLowerCase();
-                    if (texto.includes('ver todas as características') || 
+                    if (texto.includes('ver todas') || 
+                        texto.includes('conferir todas') || 
                         texto.includes('características completas') || 
                         texto.includes('mostrar mais') || 
                         texto.includes('mais características')) {
@@ -65,13 +66,12 @@ class MercadoLivreScraper(BaseScraper):
                     }
                 }
             """)
-            time.sleep(2.5) # Pausa para a janela de Especificações abrir e renderizar
+            time.sleep(2.5) 
             
             # Volta ao topo
             driver.execute_script("window.scrollTo(0, 300);")
             time.sleep(0.5)
 
-            # Usa BeautifulSoup apenas para coisas básicas (Título e Imagem)
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
             # --- TÍTULO ---
@@ -81,16 +81,14 @@ class MercadoLivreScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- DESCRIÇÃO (Via Injeção JS - Imbatível contra mudanças de classe) ---
+            # --- DESCRIÇÃO ---
             print("   [ML] Extraindo Descrição...")
             descricao = "Descrição indisponível."
             try:
                 descricao_bruta = driver.execute_script("""
-                    // Procura qualquer elemento cuja classe contenha 'description__content' ou similar
-                    var d = document.querySelector('[class*="description__content"], [class*="description-content"], .ui-pdp-description, .ui-pdp-family-description');
+                    var d = document.querySelector('[class*="description__content"], [data-testid="content"], .ui-pdp-description, .ui-pdp-family-description');
                     if(d && d.innerText.length > 10) return d.innerText;
                     
-                    // Fallback: Procura a palavra "Descrição" e pega o texto debaixo
                     var headers = document.querySelectorAll('h2, h3, div, p');
                     for(var i=0; i<headers.length; i++) {
                         var txt = headers[i].innerText.toLowerCase().trim();
@@ -106,19 +104,27 @@ class MercadoLivreScraper(BaseScraper):
                     descricao = self.limpar_lixo_comercial(descricao_bruta.strip())
                     print("   ✅ Descrição capturada com sucesso.")
                 else:
-                    print("   ⚠️ Aviso: Mercado Livre não renderizou a descrição nesta página.")
+                    # Fallback BeautifulSoup para a classe exata que enviou
+                    desc_bs4 = soup.find('p', attrs={"data-testid": "content", "class": re.compile(r"description__content")})
+                    if desc_bs4:
+                        for br in desc_bs4.find_all("br"): br.replace_with("\n")
+                        descricao = self.limpar_lixo_comercial(desc_bs4.get_text(separator="\n", strip=True))
+                        print("   ✅ Descrição capturada via fallback BS4.")
+                    else:
+                        print("   ⚠️ Aviso: Mercado Livre não renderizou a descrição.")
             except Exception as e:
                 print(f"   ⚠️ Erro ao extrair descrição via JS: {e}")
 
-            # --- CARACTERÍSTICAS (Via Injeção JS - Fim do problema das tabelas vazias) ---
+            # --- CARACTERÍSTICAS (Atualizado para Highlighted Specs) ---
             print("   [ML] Extraindo Ficha Técnica...")
             specs = {}
             try:
-                # O script abaixo procura TUDO o que pareça uma linha de tabela, sem precisar do nome exato da classe
                 specs_dict = driver.execute_script("""
                     var specs = {};
-                    var rows = document.querySelectorAll('tr, [class*="specs__row"], [class*="andes-table__row"], [class*="specs-table__row"]');
+                    // Apanha as linhas antigas, as de catálogo e as novas Highlighted
+                    var rows = document.querySelectorAll('tr, [class*="specs__row"], [class*="andes-table__row"], [class*="specs-table__row"], [class*="row--key-value"]');
                     rows.forEach(r => {
+                        // Tenta estrutura de Tabela/Divs Antiga
                         var th = r.querySelector('th, [class*="row-title"], [class*="table__header"]');
                         var td = r.querySelector('td, [class*="row-condition"], [class*="table__column"]');
                         if(th && td) {
@@ -127,13 +133,26 @@ class MercadoLivreScraper(BaseScraper):
                             if(key && val && key !== val) {
                                 specs[key] = val;
                             }
+                        } else {
+                            // Tenta estrutura Nova (Highlighted Specs) que você encontrou no Forno
+                            var p_label = r.querySelector('p[class*="key-value__labels"]');
+                            if(p_label) {
+                                var spans = p_label.querySelectorAll(':scope > span');
+                                if(spans.length >= 2) {
+                                    // Pega o primeiro span como chave (remove os dois pontos no fim) e o último como valor
+                                    var key = spans[0].innerText.replace(/:$/, '').trim();
+                                    var val = spans[spans.length - 1].innerText.trim();
+                                    if(key && val && key !== val) {
+                                        specs[key] = val;
+                                    }
+                                }
+                            }
                         }
                     });
                     return specs;
                 """)
                 
                 if specs_dict:
-                    # Passa pelo nosso filtro padrão de limpeza (remover Garantia, etc)
                     for k, v in specs_dict.items():
                         chave_limpa = self.limpar_texto(k)
                         valor_limpo = self.limpar_texto(v)
