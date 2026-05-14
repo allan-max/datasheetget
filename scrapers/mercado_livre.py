@@ -13,7 +13,7 @@ class MercadoLivreScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [ML] Iniciando Scraper (Motor de Catálogo V7 - Adaptação Highlighted Specs)...")
+            print(f"   [ML] Iniciando Scraper (Modo VISUAL / DEPURAÇÃO)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -33,7 +33,9 @@ class MercadoLivreScraper(BaseScraper):
             options.add_argument("--disable-gpu")
             
             driver = uc.Chrome(options=options, version_main=109)
-            driver.minimize_window() 
+            
+            # --- AGORA A JANELA VAI ABRIR MAXIMIZADA PARA VOCÊ VER TUDO ---
+            driver.maximize_window() 
             
             print(f"   [ML] Acessando: {self.url}")
             driver.set_page_load_timeout(30)
@@ -49,9 +51,9 @@ class MercadoLivreScraper(BaseScraper):
             print("   [ML] Vasculhando a página para carregar elementos ocultos...")
             for i in range(4):
                 driver.execute_script("window.scrollBy(0, 800);")
-                time.sleep(1)
+                time.sleep(1.5) # Deixei o scroll um pouco mais lento para você conseguir acompanhar com os olhos
             
-            # --- 2. DESTRUIDOR DE BOTÕES DE CATÁLOGO (Atualizado com "Conferir") ---
+            # --- 2. DESTRUIDOR DE BOTÕES DE CATÁLOGO ---
             print("   [ML] Clicando nos botões de expansão de ficha técnica...")
             driver.execute_script("""
                 var botoes = document.querySelectorAll('button, a, span');
@@ -66,7 +68,7 @@ class MercadoLivreScraper(BaseScraper):
                     }
                 }
             """)
-            time.sleep(2.5) 
+            time.sleep(3) 
             
             # Volta ao topo
             driver.execute_script("window.scrollTo(0, 300);")
@@ -104,27 +106,26 @@ class MercadoLivreScraper(BaseScraper):
                     descricao = self.limpar_lixo_comercial(descricao_bruta.strip())
                     print("   ✅ Descrição capturada com sucesso.")
                 else:
-                    # Fallback BeautifulSoup para a classe exata que enviou
                     desc_bs4 = soup.find('p', attrs={"data-testid": "content", "class": re.compile(r"description__content")})
                     if desc_bs4:
                         for br in desc_bs4.find_all("br"): br.replace_with("\n")
                         descricao = self.limpar_lixo_comercial(desc_bs4.get_text(separator="\n", strip=True))
                         print("   ✅ Descrição capturada via fallback BS4.")
                     else:
-                        print("   ⚠️ Aviso: Mercado Livre não renderizou a descrição.")
+                        print("   ⚠️ Aviso: Mercado Livre não renderizou a descrição nesta página.")
+                        print("   👀 Olhe para a janela do Chrome agora e veja se a descrição apareceu ou se o ML pediu Captcha!")
+                        time.sleep(5) # Pausa de 5 segundos para você conseguir analisar a tela
             except Exception as e:
                 print(f"   ⚠️ Erro ao extrair descrição via JS: {e}")
 
-            # --- CARACTERÍSTICAS (Atualizado para Highlighted Specs) ---
+            # --- CARACTERÍSTICAS ---
             print("   [ML] Extraindo Ficha Técnica...")
             specs = {}
             try:
                 specs_dict = driver.execute_script("""
                     var specs = {};
-                    // Apanha as linhas antigas, as de catálogo e as novas Highlighted
                     var rows = document.querySelectorAll('tr, [class*="specs__row"], [class*="andes-table__row"], [class*="specs-table__row"], [class*="row--key-value"]');
                     rows.forEach(r => {
-                        // Tenta estrutura de Tabela/Divs Antiga
                         var th = r.querySelector('th, [class*="row-title"], [class*="table__header"]');
                         var td = r.querySelector('td, [class*="row-condition"], [class*="table__column"]');
                         if(th && td) {
@@ -134,12 +135,10 @@ class MercadoLivreScraper(BaseScraper):
                                 specs[key] = val;
                             }
                         } else {
-                            // Tenta estrutura Nova (Highlighted Specs) que você encontrou no Forno
                             var p_label = r.querySelector('p[class*="key-value__labels"]');
                             if(p_label) {
                                 var spans = p_label.querySelectorAll(':scope > span');
                                 if(spans.length >= 2) {
-                                    // Pega o primeiro span como chave (remove os dois pontos no fim) e o último como valor
                                     var key = spans[0].innerText.replace(/:$/, '').trim();
                                     var val = spans[spans.length - 1].innerText.trim();
                                     if(key && val && key !== val) {
@@ -163,7 +162,6 @@ class MercadoLivreScraper(BaseScraper):
                 print(f"   ✅ Specs encontradas: {len(specs)} itens.")
             except Exception as e:
                 print(f"   ⚠️ Erro ao extrair specs via JS: {e}")
-
 
             # --- IMAGEM ---
             print("   [ML] Extraindo Imagem...")
