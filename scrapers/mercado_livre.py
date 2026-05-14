@@ -13,7 +13,7 @@ class MercadoLivreScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [ML] Iniciando Scraper (Catálogo Ultimate V5)...")
+            print(f"   [ML] Iniciando Scraper (Motor de Extração Visual V6)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -65,11 +65,13 @@ class MercadoLivreScraper(BaseScraper):
                     }
                 }
             """)
-            time.sleep(2.5) # Pausa maior para garantir que a janela modal de Specs abriu
+            time.sleep(2.5) # Pausa para a janela de Especificações abrir e renderizar
             
+            # Volta ao topo
             driver.execute_script("window.scrollTo(0, 300);")
             time.sleep(0.5)
 
+            # Usa BeautifulSoup apenas para coisas básicas (Título e Imagem)
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
             # --- TÍTULO ---
@@ -79,31 +81,70 @@ class MercadoLivreScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- DESCRIÇÃO (Estratégia Blindada para Catálogo) ---
+            # --- DESCRIÇÃO (Via Injeção JS - Imbatível contra mudanças de classe) ---
+            print("   [ML] Extraindo Descrição...")
             descricao = "Descrição indisponível."
-            desc_elem = soup.find(['p', 'div', 'span'], class_=re.compile(r'ui-pdp-description__content'))
-            
-            if not desc_elem:
-                desc_elem = soup.find('div', class_=re.compile(r'ui-pdp-description'))
+            try:
+                descricao_bruta = driver.execute_script("""
+                    // Procura qualquer elemento cuja classe contenha 'description__content' ou similar
+                    var d = document.querySelector('[class*="description__content"], [class*="description-content"], .ui-pdp-description, .ui-pdp-family-description');
+                    if(d && d.innerText.length > 10) return d.innerText;
+                    
+                    // Fallback: Procura a palavra "Descrição" e pega o texto debaixo
+                    var headers = document.querySelectorAll('h2, h3, div, p');
+                    for(var i=0; i<headers.length; i++) {
+                        var txt = headers[i].innerText.toLowerCase().trim();
+                        if(txt === 'descrição' || txt === 'descrição do produto') {
+                            var next = headers[i].nextElementSibling;
+                            if(next && next.innerText.length > 10) return next.innerText;
+                        }
+                    }
+                    return '';
+                """)
                 
-            # Caçador agressivo pela palavra "Descrição" nos cabeçalhos
-            if not desc_elem or len(desc_elem.get_text(strip=True)) < 15:
-                for h in soup.find_all(['h2', 'h3', 'p', 'div']):
-                    if "descrição" in h.get_text().lower() and len(h.get_text(strip=True)) < 20:
-                        desc_elem = h.find_next_sibling()
-                        if desc_elem and len(desc_elem.get_text(strip=True)) > 10:
-                            break
-
-            if desc_elem:
-                for br in desc_elem.find_all("br"):
-                    br.replace_with("\n")
-                descricao_bruta = desc_elem.get_text(separator="\n", strip=True)
-                
-                if len(descricao_bruta) > 10:
-                    descricao = self.limpar_lixo_comercial(descricao_bruta)
-                    print("   ✅ Descrição capturada e limpa.")
+                if descricao_bruta and len(descricao_bruta.strip()) > 10:
+                    descricao = self.limpar_lixo_comercial(descricao_bruta.strip())
+                    print("   ✅ Descrição capturada com sucesso.")
                 else:
-                    print("   ⚠️ Aviso: Bloco de descrição vazio ou ausente nesta página de catálogo.")
+                    print("   ⚠️ Aviso: Mercado Livre não renderizou a descrição nesta página.")
+            except Exception as e:
+                print(f"   ⚠️ Erro ao extrair descrição via JS: {e}")
+
+            # --- CARACTERÍSTICAS (Via Injeção JS - Fim do problema das tabelas vazias) ---
+            print("   [ML] Extraindo Ficha Técnica...")
+            specs = {}
+            try:
+                # O script abaixo procura TUDO o que pareça uma linha de tabela, sem precisar do nome exato da classe
+                specs_dict = driver.execute_script("""
+                    var specs = {};
+                    var rows = document.querySelectorAll('tr, [class*="specs__row"], [class*="andes-table__row"], [class*="specs-table__row"]');
+                    rows.forEach(r => {
+                        var th = r.querySelector('th, [class*="row-title"], [class*="table__header"]');
+                        var td = r.querySelector('td, [class*="row-condition"], [class*="table__column"]');
+                        if(th && td) {
+                            var key = th.innerText.trim();
+                            var val = td.innerText.trim();
+                            if(key && val && key !== val) {
+                                specs[key] = val;
+                            }
+                        }
+                    });
+                    return specs;
+                """)
+                
+                if specs_dict:
+                    # Passa pelo nosso filtro padrão de limpeza (remover Garantia, etc)
+                    for k, v in specs_dict.items():
+                        chave_limpa = self.limpar_texto(k)
+                        valor_limpo = self.limpar_texto(v)
+                        if chave_limpa and valor_limpo:
+                            specs[chave_limpa] = valor_limpo
+                            
+                specs = self.filtrar_specs(specs)
+                print(f"   ✅ Specs encontradas: {len(specs)} itens.")
+            except Exception as e:
+                print(f"   ⚠️ Erro ao extrair specs via JS: {e}")
+
 
             # --- IMAGEM ---
             print("   [ML] Extraindo Imagem...")
@@ -138,38 +179,6 @@ class MercadoLivreScraper(BaseScraper):
                         print("   ✅ Imagem salva via screenshot!")
                 except:
                     pass
-
-            # --- CARACTERÍSTICAS (O Pesadelo do Catálogo Resolvido) ---
-            specs = {}
-            
-            # TENTATIVA 1: Tabelas Andes e VPP (Tabelas Reais)
-            linhas_tabela = soup.find_all('tr', class_=re.compile(r'andes-table__row|ui-vpp-striped-specs__row|ui-pdp-specs__table-row'))
-            for row in linhas_tabela:
-                th = row.find(['th', 'td'], class_=re.compile(r'andes-table__header|ui-pdp-specs__row-title'))
-                if not th: th = row.find('th')
-                
-                td = row.find(['td', 'span'], class_=re.compile(r'andes-table__column|ui-pdp-specs__row-condition'))
-                if not td: td = row.find('td')
-                
-                if th and td:
-                    chave = self.limpar_texto(th.get_text())
-                    valor = self.limpar_texto(td.get_text())
-                    if chave and valor and chave != valor:
-                        specs[chave] = valor
-
-            # TENTATIVA 2: Layout Baseado em Divs (Se a Tabela Falhar)
-            if len(specs) < 2:
-                linhas_div = soup.find_all('div', class_=re.compile(r'ui-pdp-specs__row|ui-vpp-striped-specs__row'))
-                for row in linhas_div:
-                    textos = row.find_all(['span', 'p', 'div'])
-                    if len(textos) >= 2:
-                        chave = self.limpar_texto(textos[0].get_text())
-                        valor = self.limpar_texto(textos[-1].get_text())
-                        if chave and valor and chave != valor:
-                            specs[chave] = valor
-
-            specs = self.filtrar_specs(specs)
-            print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
             # --- FINALIZAÇÃO ---
             dados = {
