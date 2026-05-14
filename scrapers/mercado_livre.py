@@ -34,19 +34,15 @@ class MercadoLivreScraper(BaseScraper):
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
             
-            # version_main=109 é CRÍTICO para o seu Windows Server 2012 R2
             driver = uc.Chrome(options=options, version_main=109)
-            driver.minimize_window() # Minimiza a janela para não te atrapalhar
+            driver.minimize_window() 
             
             print(f"   [ML] Acessando: {self.url}")
             driver.set_page_load_timeout(30)
             driver.get(self.url)
             
-            # --- ESPERA INTELIGENTE (Substitui o time.sleep fixo) ---
             print("   [ML] Aguardando renderização do produto...")
             try:
-                # O robô vai esperar até 15 segundos APENAS se precisar. 
-                # Se o H1 carregar em 1 segundo, ele já avança imediatamente.
                 WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
             except:
                 print("   ⚠️ Aviso: O carregamento demorou muito. Forçando a leitura do HTML atual.")
@@ -62,29 +58,27 @@ class MercadoLivreScraper(BaseScraper):
             if "verifique que você não é um robô" in soup.get_text().lower() or "recaptcha" in soup.get_text().lower():
                 print("   ❌ ERRO CRÍTICO: Bloqueado pelo Captcha do Mercado Livre.")
 
-            # --- TÍTULO (Busca Universal com Regex) ---
+            # --- TÍTULO ---
             titulo = "Produto Mercado Livre"
-            # Procura qualquer h1 que tenha 'ui-pdp-title' em qualquer parte da classe
             h1 = soup.find('h1', class_=re.compile(r'ui-pdp-title'))
             if not h1:
-                # Fallback agressivo: pega o primeiro H1 da tela
                 h1 = soup.find('h1')
             
             if h1:
                 titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- DESCRIÇÃO (Busca Flexível) ---
+            # --- DESCRIÇÃO (Busca Ultra-Flexível) ---
             descricao = "Descrição indisponível."
-            desc_elem = soup.find('p', class_=re.compile(r'ui-pdp-description__content'))
+            # Removemos a restrição da tag 'p'. O ML às vezes usa 'div' ou 'span' na descrição.
+            desc_elem = soup.find(['p', 'div', 'span'], class_=re.compile(r'ui-pdp-description__content|ui-pdp-description'))
             if desc_elem:
-                # Troca <br> por quebras de linha
                 for br in desc_elem.find_all("br"):
                     br.replace_with("\n")
                 descricao_bruta = desc_elem.get_text(separator="\n", strip=True)
                 descricao = self.limpar_lixo_comercial(descricao_bruta)
 
-            # --- IMAGEM (Downloads e Screenshot Fallback) ---
+            # --- IMAGEM ---
             print("   [ML] Extraindo Imagem...")
             url_img = None
             caminho_imagem = None
@@ -102,7 +96,6 @@ class MercadoLivreScraper(BaseScraper):
                 print(f"   [ML] URL da imagem encontrada: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
-            # Se o Mercado Livre bloquear o download da imagem, tira print dela limpa
             if not caminho_imagem or not os.path.exists(caminho_imagem):
                 print("   [ML] Apelando para o Screenshot da imagem principal...")
                 try:
@@ -119,9 +112,11 @@ class MercadoLivreScraper(BaseScraper):
                 except Exception as e:
                     print(f"   ⚠️ Erro ao salvar imagem: {e}")
 
-            # --- CARACTERÍSTICAS (Tabela Flexível) ---
+            # --- CARACTERÍSTICAS (Universal: Anúncio Clássico + Catálogo) ---
             specs = {}
-            rows = soup.find_all('tr', class_=re.compile(r'andes-table__row'))
+            
+            # TENTATIVA 1: O Padrão de Tabelas (Removemos a classe estrita para apanhar qualquer tabela)
+            rows = soup.find_all('tr')
             for row in rows:
                 th = row.find('th')
                 td = row.find('td')
@@ -131,6 +126,20 @@ class MercadoLivreScraper(BaseScraper):
                     if chave and valor:
                         specs[chave] = valor
             
+            # TENTATIVA 2: Se não houver tabelas (Página de Catálogo Moderna)
+            if len(specs) < 2:
+                # O ML moderno usa divs com estas classes para as specs
+                div_rows = soup.find_all('div', class_=re.compile(r'ui-pdp-specs__row|ui-vpp-striped-specs__row|andes-table__row'))
+                for row in div_rows:
+                    # Tenta extrair todos os textos da linha. O primeiro costuma ser a chave e o último o valor.
+                    textos = row.find_all(['span', 'p', 'div'])
+                    if len(textos) >= 2:
+                        chave = self.limpar_texto(textos[0].get_text())
+                        valor = self.limpar_texto(textos[-1].get_text())
+                        # Previne que a chave e o valor sejam iguais se apanhar a mesma tag duas vezes
+                        if chave and valor and chave != valor:
+                            specs[chave] = valor
+
             specs = self.filtrar_specs(specs)
             print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
