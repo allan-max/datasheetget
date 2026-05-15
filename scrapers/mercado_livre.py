@@ -13,7 +13,7 @@ class MercadoLivreScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [ML] Iniciando Scraper (Estratégia Anti-Bloqueio e Clique Seguro)...")
+            print(f"   [ML] Iniciando Scraper (Estratégia de Clique Cirúrgico)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -34,7 +34,7 @@ class MercadoLivreScraper(BaseScraper):
             
             driver = uc.Chrome(options=options, version_main=109)
             
-            # Mantemos maximizado para você poder resolver o Captcha se necessário
+            # Mantemos maximizado para poder resolver o Captcha se necessário
             driver.maximize_window() 
             
             print(f"   [ML] Acessando: {self.url}")
@@ -55,45 +55,28 @@ class MercadoLivreScraper(BaseScraper):
             except:
                 print("   ⚠️ H1 não encontrado. Pode ser um erro de carregamento, mas vamos tentar continuar.")
             
-            # --- 2. ROLAGEM MUITO LENTA ---
+            # --- 2. ROLAGEM MUITO LENTA (Essencial para o Lazy Load da Descrição) ---
             print("   [ML] Vasculhando a página lentamente...")
             for i in range(8):
                 driver.execute_script("window.scrollBy(0, 500);")
                 time.sleep(1)
             
-            # --- 3. DESTRUIDOR DE BOTÕES SEGURO (Evita sair da página) ---
-            print("   [ML] Procurando botões ocultos de forma segura...")
+            # --- 3. CLIQUE CIRÚRGICO (Fim do erro de navegação para fora da página) ---
+            print("   [ML] Procurando botões oficiais de Ficha Técnica...")
             driver.execute_script("""
-                var botoes = document.querySelectorAll('button, a, span, div');
-                for (var i = 0; i < botoes.length; i++) {
-                    if(botoes[i].innerText) {
-                        var texto = botoes[i].innerText.toLowerCase().trim();
-                        
-                        // PALAVRAS PROIBIDAS: Se tiver isso, ignora o botão para não sair da página!
-                        if (texto.includes('perguntas') || texto.includes('loja') || texto.includes('opiniões') || texto.includes('ofertas') || texto.includes('produtos') || texto.includes('ver todas as marcas')) {
-                            continue;
-                        }
-                        
-                        // PALAVRAS EXATAS: Só clica se for especificamente da ficha técnica/descrição
-                        if (texto.includes('todas as características') || 
-                            texto === 'mostrar mais' || 
-                            texto === 'ler mais' || 
-                            texto === 'ver mais' ||
-                            texto.includes('descrição completa')) {
-                            
-                            // DESARMADOR DE LINKS: Tira o link (href) da tag <a> para o navegador não sair da tela do produto
-                            if(botoes[i].tagName.toLowerCase() === 'a') {
-                                botoes[i].removeAttribute('href');
-                                botoes[i].removeAttribute('target');
-                            }
-                            
-                            try { botoes[i].click(); } catch(e) {}
-                        }
-                    }
+                // Procura EXCLUSIVAMENTE pelos botões que abrem modais no Mercado Livre
+                var modais = document.querySelectorAll('[data-testid="action-modal-link"], .ui-pdp-action-modal__link');
+                for (var i = 0; i < modais.length; i++) {
+                    try { 
+                        // Impede a navegação padrão do React caso seja um link disfarçado
+                        modais[i].addEventListener('click', function(e) { e.preventDefault(); });
+                        modais[i].click(); 
+                    } catch(e) {}
                 }
             """)
             time.sleep(3) 
             
+            # Sobe a tela para garantir que o screenshot saia bem feito
             driver.execute_script("window.scrollTo(0, 400);")
             time.sleep(1)
 
