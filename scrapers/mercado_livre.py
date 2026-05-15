@@ -13,7 +13,7 @@ class MercadoLivreScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [ML] Iniciando Scraper (Modo VISUAL / DEPURAÇÃO)...")
+            print(f"   [ML] Iniciando Scraper (Estratégia Anti-Bloqueio Suprema)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -34,45 +34,58 @@ class MercadoLivreScraper(BaseScraper):
             
             driver = uc.Chrome(options=options, version_main=109)
             
-            # --- AGORA A JANELA VAI ABRIR MAXIMIZADA PARA VOCÊ VER TUDO ---
+            # Mantemos maximizado para você poder resolver o Captcha se necessário
             driver.maximize_window() 
             
             print(f"   [ML] Acessando: {self.url}")
             driver.set_page_load_timeout(30)
             driver.get(self.url)
             
+            # --- 1. VERIFICAÇÃO DE CAPTCHA INTERATIVA ---
+            time.sleep(3) # Espera carregar o desafio
+            if "verifique que você não é um robô" in driver.page_source.lower() or "recaptcha" in driver.page_source.lower():
+                print("   🚨 [ALERTA] MERCADO LIVRE PEDIU CAPTCHA!")
+                print("   ⏳ O robô vai pausar por 25 SEGUNDOS. Por favor, resolva o Captcha na janela do Chrome AGORA!")
+                time.sleep(25)
+                print("   ▶️ Retomando a extração...")
+            
             print("   [ML] Aguardando renderização inicial...")
             try:
                 WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
             except:
-                pass
+                print("   ⚠️ H1 não encontrado. Pode ser um erro de carregamento, mas vamos tentar continuar.")
             
-            # --- 1. ROLAGEM FORÇADA ---
-            print("   [ML] Vasculhando a página para carregar elementos ocultos...")
-            for i in range(4):
-                driver.execute_script("window.scrollBy(0, 800);")
-                time.sleep(1.5) # Deixei o scroll um pouco mais lento para você conseguir acompanhar com os olhos
+            # --- 2. ROLAGEM MUITO LENTA (Para acionar a Descrição com certeza) ---
+            print("   [ML] Vasculhando a página lentamente...")
+            # Em vez de grandes saltos, 8 pequenos saltos para não pular o trigger do lazy load
+            for i in range(8):
+                driver.execute_script("window.scrollBy(0, 500);")
+                time.sleep(1)
             
-            # --- 2. DESTRUIDOR DE BOTÕES DE CATÁLOGO ---
-            print("   [ML] Clicando nos botões de expansão de ficha técnica...")
+            # --- 3. DESTRUIDOR DE TODOS OS BOTÕES (Specs e Descrição) ---
+            print("   [ML] Procurando botões ocultos e abas de descrição...")
             driver.execute_script("""
-                var botoes = document.querySelectorAll('button, a, span');
+                var botoes = document.querySelectorAll('button, a, span, div');
                 for (var i = 0; i < botoes.length; i++) {
-                    var texto = botoes[i].innerText.toLowerCase();
-                    if (texto.includes('ver todas') || 
-                        texto.includes('conferir todas') || 
-                        texto.includes('características completas') || 
-                        texto.includes('mostrar mais') || 
-                        texto.includes('mais características')) {
-                        try { botoes[i].click(); } catch(e) {}
+                    if(botoes[i].innerText) {
+                        var texto = botoes[i].innerText.toLowerCase();
+                        if (texto.includes('ver todas') || 
+                            texto.includes('conferir') || 
+                            texto.includes('características') || 
+                            texto.includes('mostrar mais') || 
+                            texto.includes('mais características') ||
+                            texto.includes('descrição completa') ||
+                            texto.includes('ler mais')) {
+                            try { botoes[i].click(); } catch(e) {}
+                        }
                     }
                 }
             """)
-            time.sleep(3) 
+            time.sleep(3) # Tempo para as janelas abrirem e o HTML atualizar
             
-            # Volta ao topo
-            driver.execute_script("window.scrollTo(0, 300);")
-            time.sleep(0.5)
+            # Sobe a tela para garantir que o screenshot saia bem feito
+            driver.execute_script("window.scrollTo(0, 400);")
+            time.sleep(1)
 
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
@@ -82,41 +95,36 @@ class MercadoLivreScraper(BaseScraper):
             if not h1: h1 = soup.find('h1')
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
+            
+            if titulo == "Produto Mercado Livre":
+                print("   ❌ ERRO CRÍTICO: O Mercado Livre bloqueou o acesso completamente.")
 
-            # --- DESCRIÇÃO ---
+            # --- DESCRIÇÃO (Estratégia Blindada Tripla via BeautifulSoup) ---
             print("   [ML] Extraindo Descrição...")
             descricao = "Descrição indisponível."
-            try:
-                descricao_bruta = driver.execute_script("""
-                    var d = document.querySelector('[class*="description__content"], [data-testid="content"], .ui-pdp-description, .ui-pdp-family-description');
-                    if(d && d.innerText.length > 10) return d.innerText;
-                    
-                    var headers = document.querySelectorAll('h2, h3, div, p');
-                    for(var i=0; i<headers.length; i++) {
-                        var txt = headers[i].innerText.toLowerCase().trim();
-                        if(txt === 'descrição' || txt === 'descrição do produto') {
-                            var next = headers[i].nextElementSibling;
-                            if(next && next.innerText.length > 10) return next.innerText;
-                        }
-                    }
-                    return '';
-                """)
+            desc_texto = ""
+            
+            # Tentativa 1: Busca pela classe que armazena a descrição
+            desc_caixa = soup.find(class_=re.compile(r'ui-pdp-description__content|ui-pdp-family-description'))
+            if desc_caixa:
+                for br in desc_caixa.find_all("br"): br.replace_with("\n")
+                desc_texto = desc_caixa.get_text(separator="\n", strip=True)
                 
-                if descricao_bruta and len(descricao_bruta.strip()) > 10:
-                    descricao = self.limpar_lixo_comercial(descricao_bruta.strip())
-                    print("   ✅ Descrição capturada com sucesso.")
-                else:
-                    desc_bs4 = soup.find('p', attrs={"data-testid": "content", "class": re.compile(r"description__content")})
-                    if desc_bs4:
-                        for br in desc_bs4.find_all("br"): br.replace_with("\n")
-                        descricao = self.limpar_lixo_comercial(desc_bs4.get_text(separator="\n", strip=True))
-                        print("   ✅ Descrição capturada via fallback BS4.")
-                    else:
-                        print("   ⚠️ Aviso: Mercado Livre não renderizou a descrição nesta página.")
-                        print("   👀 Olhe para a janela do Chrome agora e veja se a descrição apareceu ou se o ML pediu Captcha!")
-                        time.sleep(5) # Pausa de 5 segundos para você conseguir analisar a tela
-            except Exception as e:
-                print(f"   ⚠️ Erro ao extrair descrição via JS: {e}")
+            # Tentativa 2: Busca literal pela palavra "Descrição" caso a classe tenha mudado
+            if len(desc_texto) < 15:
+                for tag in soup.find_all(['h2', 'h3', 'div', 'p']):
+                    if tag.text and tag.text.strip().lower() in ['descrição', 'descrição do produto']:
+                        irmao = tag.find_next_sibling()
+                        if irmao:
+                            for br in irmao.find_all("br"): br.replace_with("\n")
+                            desc_texto = irmao.get_text(separator="\n", strip=True)
+                            if len(desc_texto) > 15: break
+
+            if len(desc_texto) > 15:
+                descricao = self.limpar_lixo_comercial(desc_texto)
+                print("   ✅ Descrição capturada com sucesso.")
+            else:
+                print("   ⚠️ Aviso: Mercado Livre não renderizou a descrição nesta página.")
 
             # --- CARACTERÍSTICAS ---
             print("   [ML] Extraindo Ficha Técnica...")
