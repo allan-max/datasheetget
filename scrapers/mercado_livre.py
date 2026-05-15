@@ -13,7 +13,7 @@ class MercadoLivreScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [ML] Iniciando Scraper (Estratégia Anti-Bloqueio Suprema)...")
+            print(f"   [ML] Iniciando Scraper (Estratégia Anti-Bloqueio e Clique Seguro)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -42,7 +42,7 @@ class MercadoLivreScraper(BaseScraper):
             driver.get(self.url)
             
             # --- 1. VERIFICAÇÃO DE CAPTCHA INTERATIVA ---
-            time.sleep(3) # Espera carregar o desafio
+            time.sleep(3) 
             if "verifique que você não é um robô" in driver.page_source.lower() or "recaptcha" in driver.page_source.lower():
                 print("   🚨 [ALERTA] MERCADO LIVRE PEDIU CAPTCHA!")
                 print("   ⏳ O robô vai pausar por 25 SEGUNDOS. Por favor, resolva o Captcha na janela do Chrome AGORA!")
@@ -55,35 +55,45 @@ class MercadoLivreScraper(BaseScraper):
             except:
                 print("   ⚠️ H1 não encontrado. Pode ser um erro de carregamento, mas vamos tentar continuar.")
             
-            # --- 2. ROLAGEM MUITO LENTA (Para acionar a Descrição com certeza) ---
+            # --- 2. ROLAGEM MUITO LENTA ---
             print("   [ML] Vasculhando a página lentamente...")
-            # Em vez de grandes saltos, 8 pequenos saltos para não pular o trigger do lazy load
             for i in range(8):
                 driver.execute_script("window.scrollBy(0, 500);")
                 time.sleep(1)
             
-            # --- 3. DESTRUIDOR DE TODOS OS BOTÕES (Specs e Descrição) ---
-            print("   [ML] Procurando botões ocultos e abas de descrição...")
+            # --- 3. DESTRUIDOR DE BOTÕES SEGURO (Evita sair da página) ---
+            print("   [ML] Procurando botões ocultos de forma segura...")
             driver.execute_script("""
                 var botoes = document.querySelectorAll('button, a, span, div');
                 for (var i = 0; i < botoes.length; i++) {
                     if(botoes[i].innerText) {
-                        var texto = botoes[i].innerText.toLowerCase();
-                        if (texto.includes('ver todas') || 
-                            texto.includes('conferir') || 
-                            texto.includes('características') || 
-                            texto.includes('mostrar mais') || 
-                            texto.includes('mais características') ||
-                            texto.includes('descrição completa') ||
-                            texto.includes('ler mais')) {
+                        var texto = botoes[i].innerText.toLowerCase().trim();
+                        
+                        // PALAVRAS PROIBIDAS: Se tiver isso, ignora o botão para não sair da página!
+                        if (texto.includes('perguntas') || texto.includes('loja') || texto.includes('opiniões') || texto.includes('ofertas') || texto.includes('produtos') || texto.includes('ver todas as marcas')) {
+                            continue;
+                        }
+                        
+                        // PALAVRAS EXATAS: Só clica se for especificamente da ficha técnica/descrição
+                        if (texto.includes('todas as características') || 
+                            texto === 'mostrar mais' || 
+                            texto === 'ler mais' || 
+                            texto === 'ver mais' ||
+                            texto.includes('descrição completa')) {
+                            
+                            // DESARMADOR DE LINKS: Tira o link (href) da tag <a> para o navegador não sair da tela do produto
+                            if(botoes[i].tagName.toLowerCase() === 'a') {
+                                botoes[i].removeAttribute('href');
+                                botoes[i].removeAttribute('target');
+                            }
+                            
                             try { botoes[i].click(); } catch(e) {}
                         }
                     }
                 }
             """)
-            time.sleep(3) # Tempo para as janelas abrirem e o HTML atualizar
+            time.sleep(3) 
             
-            # Sobe a tela para garantir que o screenshot saia bem feito
             driver.execute_script("window.scrollTo(0, 400);")
             time.sleep(1)
 
@@ -99,18 +109,16 @@ class MercadoLivreScraper(BaseScraper):
             if titulo == "Produto Mercado Livre":
                 print("   ❌ ERRO CRÍTICO: O Mercado Livre bloqueou o acesso completamente.")
 
-            # --- DESCRIÇÃO (Estratégia Blindada Tripla via BeautifulSoup) ---
+            # --- DESCRIÇÃO ---
             print("   [ML] Extraindo Descrição...")
             descricao = "Descrição indisponível."
             desc_texto = ""
             
-            # Tentativa 1: Busca pela classe que armazena a descrição
             desc_caixa = soup.find(class_=re.compile(r'ui-pdp-description__content|ui-pdp-family-description'))
             if desc_caixa:
                 for br in desc_caixa.find_all("br"): br.replace_with("\n")
                 desc_texto = desc_caixa.get_text(separator="\n", strip=True)
                 
-            # Tentativa 2: Busca literal pela palavra "Descrição" caso a classe tenha mudado
             if len(desc_texto) < 15:
                 for tag in soup.find_all(['h2', 'h3', 'div', 'p']):
                     if tag.text and tag.text.strip().lower() in ['descrição', 'descrição do produto']:
