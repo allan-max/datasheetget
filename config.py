@@ -143,6 +143,11 @@ SITES_CONFIG = {
         'modulo': 'kalunga',
         'classe': 'KalungaScraper'
     },
+    'ELGIN': {
+        'padroes_url': [r'elgin\.com\.br'],
+        'modulo': 'elgin',
+        'classe': 'ElginScraper'
+    },
     'QUASETUDO': {
         'padroes_url': [r'quasetudodeinformatica\.com\.br'],
         'modulo': 'quasetudo',
