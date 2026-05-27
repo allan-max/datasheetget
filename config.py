@@ -133,6 +133,11 @@ SITES_CONFIG = {
         'modulo': 'vonder',
         'classe': 'VonderScraper'
     },
+    'CONSUL': {
+        'padroes_url': [r'consul\.com\.br'],
+        'modulo': 'consul',
+        'classe': 'ConsulScraper'
+    },
     'LENOVO': {
         'padroes_url': [r'lenovo\.com'],
         'modulo': 'lenovo',
