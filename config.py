@@ -153,6 +153,11 @@ SITES_CONFIG = {
         'modulo': 'quasetudo',
         'classe': 'QuaseTudoScraper'
     },
+    'ACIMAQ': {
+        'padroes_url': [r'acimaq\.com\.br'],
+        'modulo': 'acimaq',
+        'classe': 'AcimaqScraper'
+    },
     'BHPHOTOVIDEO': {
         'padroes_url': [r'bhphotovideo\.com'],
         'modulo': 'bhphotovideo',
