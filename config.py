@@ -11,6 +11,11 @@ SITES_CONFIG = {
         'modulo': 'mercado_livre',
         'classe': 'MercadoLivreScraper'
     },
+    'ACIMAQ': {
+        'padroes_url': [r'acimaq\.com\.br'],
+        'modulo': 'acimaq',
+        'class': 'AcimaqScraper'
+    },
     'AMAZON': {
         'padroes_url': [r'amazon\.com', r'amzn\.to'],
         'modulo': 'amazon',
