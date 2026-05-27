@@ -133,6 +133,11 @@ SITES_CONFIG = {
         'modulo': 'vonder',
         'classe': 'VonderScraper'
     },
+    'LENOVO': {
+        'padroes_url': [r'lenovo\.com'],
+        'modulo': 'lenovo',
+        'classe': 'LenovoScraper'
+    },
     'ELECTROLUX': {
         'padroes_url': [r'loja\.electrolux\.com\.br', r'electrolux\.com\.br'],
         'modulo': 'electrolux',
