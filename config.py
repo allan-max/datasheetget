@@ -143,6 +143,11 @@ SITES_CONFIG = {
         'modulo': 'kalunga',
         'classe': 'KalungaScraper'
     },
+    'BRASTEMP': {
+        'padroes_url': [r'brastemp\.com\.br'],
+        'modulo': 'brastemp',
+        'classe': 'BrastempScraper'
+    },
     'ELGIN': {
         'padroes_url': [r'elgin\.com\.br'],
         'modulo': 'elgin',
