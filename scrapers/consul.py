@@ -13,7 +13,7 @@ class ConsulScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Consul] A iniciar Scraper (Motor VTEX com Formatação Premium)...")
+            print(f"   [Consul] A iniciar Scraper (Motor de Tabs e Tabela Atualizada)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -51,9 +51,14 @@ class ConsulScraper(BaseScraper):
                 driver.execute_script("window.scrollBy(0, 700);")
                 time.sleep(1)
             
-            # --- DESTRUIDOR DE BOTÕES DE CATÁLOGO ---
-            print("   [Consul] A expandir conteúdo oculto...")
+            # --- AUTO-CLICKER (Agora focado no separador de Especificações) ---
+            print("   [Consul] A expandir separadores de Ficha Técnica...")
             driver.execute_script("""
+                // 1. Força o clique no separador exato (Novo Layout)
+                var tabSpecs = document.querySelector('#tab-especificacoes, [aria-controls="especificacoes"], .consul-pdp-components-0-x-specification-tab');
+                if(tabSpecs) { try { tabSpecs.click(); } catch(e) {} }
+                
+                // 2. Garante que abre outros botões de "Ler Mais" ou "Ver Mais"
                 var botoes = document.querySelectorAll('button, a, span, div');
                 for (var i = 0; i < botoes.length; i++) {
                     if(botoes[i].innerText) {
@@ -93,13 +98,11 @@ class ConsulScraper(BaseScraper):
                 descricao_bruta = driver.execute_script("""
                     var text = '';
                     
-                    // 1. Tenta apanhar algum texto introdutório solto
                     var desc = document.querySelector('.productDescriptionText, .productDescription');
                     if (desc && desc.innerText.trim().length > 15) {
                         text += desc.innerText.trim() + '\\n\\n';
                     }
                     
-                    // 2. Apanha todos os cartões de diferenciais e formata em lista
                     var cards = document.querySelectorAll('.whirlpool-styleguide-0-x-whp_styleguide-imageTextCard--texts');
                     if (cards.length > 0) {
                         text += 'Destaques do Produto:\\n';
@@ -121,7 +124,6 @@ class ConsulScraper(BaseScraper):
                     return text;
                 """)
                 
-                # Fallback em Python caso o JS falhe
                 if not descricao_bruta or len(descricao_bruta.strip()) < 15:
                     linhas = []
                     cards_bs4 = soup.find_all('div', class_=re.compile(r"imageTextCard--texts"))
@@ -146,27 +148,46 @@ class ConsulScraper(BaseScraper):
             except Exception as e:
                 print(f"   ⚠️ Erro ao extrair descrição: {e}")
 
-            # --- CARACTERÍSTICAS TÉCNICAS ---
+            # --- CARACTERÍSTICAS TÉCNICAS (ATUALIZADAS) ---
             print("   [Consul] A extrair Ficha Técnica...")
             specs = {}
             try:
                 specs_dict = driver.execute_script("""
                     var specs = {};
-                    var items = document.querySelectorAll('.whp_styleguide-producttechnicaltable p, .whirlpool-styleguide-0-x-whp_styleguide-technicalSpecifications-alert p');
                     
-                    if (items.length > 0) {
-                        items.forEach(p => {
-                            var text = p.innerText.trim();
-                            if(text.includes(':')) {
-                                var parts = text.split(':');
-                                var key = parts.shift().trim(); 
-                                var val = parts.join(':').trim(); 
-                                if(key && val) {
-                                    specs[key] = val;
-                                }
+                    // 1. Nova Estratégia: Tabela de Especificações Consul 
+                    var tableRows = document.querySelectorAll('.consul-pdp-components-0-x-table-technical-specification-custom tr');
+                    if (tableRows.length > 0) {
+                        tableRows.forEach(r => {
+                            var tds = r.querySelectorAll('td');
+                            if (tds.length >= 2) {
+                                var key = tds[0].innerText.trim();
+                                var val = tds[1].innerText.trim();
+                                if(key && val && key !== val) specs[key] = val;
                             }
                         });
-                    } else {
+                    }
+                    
+                    // 2. Estratégia Anterior (Whirlpool Styleguide com textos misturados)
+                    if (Object.keys(specs).length === 0) {
+                        var items = document.querySelectorAll('.whp_styleguide-producttechnicaltable p, .whirlpool-styleguide-0-x-whp_styleguide-technicalSpecifications-alert p');
+                        if (items.length > 0) {
+                            items.forEach(p => {
+                                var text = p.innerText.trim();
+                                if(text.includes(':')) {
+                                    var parts = text.split(':');
+                                    var key = parts.shift().trim(); 
+                                    var val = parts.join(':').trim(); 
+                                    if(key && val) {
+                                        specs[key] = val;
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    
+                    // 3. Fallback Genérico VTEX
+                    if (Object.keys(specs).length === 0) {
                         var rows = document.querySelectorAll('tr');
                         rows.forEach(r => {
                             var th = r.querySelector('th');
@@ -289,7 +310,6 @@ class ConsulScraper(BaseScraper):
             if any(termo in linha_lower for termo in termos_proibidos):
                 continue 
             
-            # Remove as marcações de rodapé [1], [2], [3]
             linha_clean = re.sub(r'\[\d+\]', '', linha_clean)
             
             linhas_limpas.append(linha_clean)
