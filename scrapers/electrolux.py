@@ -13,7 +13,7 @@ class ElectroluxScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Electrolux] A iniciar Scraper (Motor VTEX Customizado)...")
+            print(f"   [Electrolux] A iniciar Scraper (Correção do Motor de Descrição)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -38,14 +38,13 @@ class ElectroluxScraper(BaseScraper):
             
             print("   [Electrolux] A aguardar renderização...")
             try:
-                # Aguarda pela classe customizada da Electrolux ou h1 genérico
                 WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, "h1, .electrolux-electrolux-components-io-0-x-productNameCustomBrand"))
                 )
             except:
                 print("   ⚠️ Aviso: Título não encontrado rapidamente. A tentar forçar a extração.")
             
-            # --- ROLAGEM PROGRESSIVA (Lazy Load) ---
+            # --- ROLAGEM PROGRESSIVA ---
             print("   [Electrolux] A executar rolagem para carregar descrições e imagens...")
             for i in range(5):
                 driver.execute_script("window.scrollBy(0, 600);")
@@ -89,21 +88,11 @@ class ElectroluxScraper(BaseScraper):
             print("   [Electrolux] A extrair Descrição...")
             descricao = "Descrição indisponível."
             try:
+                # Captura o texto completo via innerText direto do container para não perder as tags span
                 descricao_bruta = driver.execute_script("""
-                    var text = '';
-                    var desc = document.querySelector('.vtex-store-components-3-x-productDescriptionText, .productDescription');
-                    if (desc) {
-                        // Converte a estrutura HTML da VTEX em texto legível
-                        var ps = desc.querySelectorAll('p, h2, h3, li');
-                        if (ps.length > 0) {
-                            ps.forEach(p => { 
-                                if(p.innerText.trim().length > 0) text += p.innerText.trim() + '\\n\\n'; 
-                            });
-                        } else {
-                            text = desc.innerText;
-                        }
-                    }
-                    return text;
+                    var desc = document.querySelector('[class*="productDescriptionText"], .productDescription, [class*="productDescriptionContainer"]');
+                    if (desc) return desc.innerText;
+                    return '';
                 """)
                 
                 if not descricao_bruta or len(descricao_bruta.strip()) < 15:
@@ -144,7 +133,6 @@ class ElectroluxScraper(BaseScraper):
                         chave_limpa = self.limpar_texto(k)
                         valor_limpo = self.limpar_texto(v)
                         
-                        # Filtro VTEX Padrão
                         ignorar = False
                         termos_proibidos_specs = [
                             "garantia", "ean", "referência", "sku", "sac", "nota fiscal", "instalação"
@@ -226,13 +214,9 @@ class ElectroluxScraper(BaseScraper):
     def limpar_descricao_electrolux(self, texto_bruto):
         if not texto_bruto: return "Descrição indisponível."
 
-        texto_limpo = re.sub(r'\s+', ' ', texto_bruto).strip()
+        linhas = texto_bruto.splitlines()
+        linhas_limpas = []
         
-        # Divide por pontuação ou quebras de linha
-        frases = re.split(r'(?<=[.!?])\s+|\n', texto_limpo)
-        frases_uteis_finais = []
-        
-        # Filtro Específico para o Marketing da Electrolux
         termos_proibidos_frase = [
             "garantia", "loja oficial", "instalação", "serviço oficial",
             "condições exclusivas", "devolução", "troca", "frete", "entrega", 
@@ -240,25 +224,19 @@ class ElectroluxScraper(BaseScraper):
             "fale conosco", "televendas", "atendimento", "sac", "consulte o manual"
         ]
 
-        for frase in frases:
-            frase_lower = frase.lower()
-            tem_lixo = False
-            
-            if len(frase) < 10:
+        for linha in linhas:
+            linha_clean = linha.strip()
+            if not linha_clean:
                 continue
 
-            # Remove os títulos vazios de vendas, como "Garanta sua geladeira Electrolux Multidoor"
-            if "garanta sua" in frase_lower or "compre agora" in frase_lower:
+            linha_lower = linha_clean.lower()
+            
+            if "garanta sua" in linha_lower or "compre agora" in linha_lower:
                 continue
 
-            for termo in termos_proibidos_frase:
-                if termo in frase_lower:
-                    tem_lixo = True
-                    break 
+            if any(termo in linha_lower for termo in termos_proibidos_frase):
+                continue 
             
-            if not tem_lixo:
-                # Mantém os marcadores de lista originais se existirem
-                frases_uteis_finais.append(frase.strip())
+            linhas_limpas.append(linha_clean)
 
-        # Reconstrói o texto
-        return "\n\n".join(frases_uteis_finais)
+        return "\n\n".join(linhas_limpas)
