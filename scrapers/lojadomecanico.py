@@ -13,7 +13,7 @@ class LojaDoMecanicoScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [LojaDoMecanico] Iniciando Scraper (V4 - Motor de Descrição Atualizado)...")
+            print(f"   [LojaDoMecanico] Iniciando Scraper (V5 - Extração JS e Auto-Clicker)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder:
                 self.output_folder = "output"
@@ -29,7 +29,6 @@ class LojaDoMecanicoScraper(BaseScraper):
             opts.add_argument("--disable-dev-shm-usage")
             opts.add_argument("--disable-gpu")
 
-            # Mantemos invisível (minimize) como nos outros scrapers para não atrapalhar
             driver = uc.Chrome(options=opts, version_main=109)
             driver.minimize_window()
 
@@ -45,11 +44,23 @@ class LojaDoMecanicoScraper(BaseScraper):
             except:
                 print("   ⚠️ Aviso: H1 não encontrado rapidamente. Tentando continuar.")
 
-            # Rolagem para garantir Lazy Load
-            print("   [LojaDoMecanico] Vasculhando a página...")
+            # --- 2. ROLAGEM E AUTO-CLICKER ---
+            print("   [LojaDoMecanico] Forçando o carregamento da descrição (Toggle/Ler Mais)...")
             for i in range(4):
                 driver.execute_script("window.scrollBy(0, 600);")
                 time.sleep(1)
+                
+            driver.execute_script("""
+                var botoes = document.querySelectorAll('a, button, span, div');
+                for(var i=0; i<botoes.length; i++) {
+                    var txt = botoes[i].innerText ? botoes[i].innerText.toLowerCase().trim() : '';
+                    if(txt === 'leia mais' || txt === 'ver mais' || txt === 'descrição completa' || txt === 'ver descrição') {
+                        try { botoes[i].click(); } catch(e) {}
+                    }
+                }
+            """)
+            time.sleep(1.5) # Dá tempo para a caixa de texto expandir
+            
             driver.execute_script("window.scrollTo(0, 300);")
             time.sleep(0.5)
 
@@ -61,6 +72,36 @@ class LojaDoMecanicoScraper(BaseScraper):
             if h1:
                 titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
+
+            # --- DESCRIÇÃO (MÉTODO JAVASCRIPT BLINDADO) ---
+            print("   [LojaDoMecanico] Extraindo Descrição...")
+            descricao = "Descrição indisponível."
+            try:
+                descricao_bruta = driver.execute_script("""
+                    // Procura diretamente a caixa da descrição, esteja ela aberta ou não
+                    var desc = document.querySelector('#product-description, #descricao, .description');
+                    if(desc && desc.innerText.length > 15) return desc.innerText;
+                    
+                    // Fallback: Procura títulos de "Descrição"
+                    var headers = document.querySelectorAll('h2, h3, h4');
+                    for(var i=0; i<headers.length; i++) {
+                        var t = headers[i].innerText.toLowerCase().trim();
+                        if(t === 'descrição' || t === 'descrição do produto' || t === 'sobre o produto') {
+                            var next = headers[i].nextElementSibling;
+                            if(next && next.innerText.length > 15) return next.innerText;
+                        }
+                    }
+                    return '';
+                """)
+                
+                if descricao_bruta and len(descricao_bruta.strip()) > 10:
+                    # Envia o texto puro do navegador para o nosso limpador cirúrgico
+                    descricao = self.limpar_descricao_loja(descricao_bruta.strip())
+                    print("   ✅ Descrição capturada e limpa com sucesso.")
+                else:
+                    print("   ⚠️ Aviso: O navegador não encontrou o texto da descrição.")
+            except Exception as e:
+                print(f"   ⚠️ Erro ao extrair descrição via JS: {e}")
 
             # --- IMAGEM ---
             print("   [LojaDoMecanico] Extraindo Imagem...")
@@ -92,34 +133,6 @@ class LojaDoMecanicoScraper(BaseScraper):
                         print("   ✅ Imagem salva via screenshot!")
                 except:
                     pass
-
-            # --- DESCRIÇÃO ---
-            print("   [LojaDoMecanico] Extraindo Descrição...")
-            descricao_bruta = ""
-            
-            # ATUALIZAÇÃO: Agora procura pela nova classe e novo ID
-            desc_container = soup.find("div", id=re.compile(r"product-description|descricao"))
-            if desc_container:
-                # Transforma as tags HTML em formatação de texto bonito
-                for li in desc_container.find_all("li"):
-                    li.insert_before("\n- ")
-                for br in desc_container.find_all("br"):
-                    br.replace_with("\n")
-                for p in desc_container.find_all("p"):
-                    p.insert_before("\n\n")
-
-                descricao_bruta = desc_container.get_text(separator=" ", strip=True)
-                # Limpa espaços e quebras de linha em excesso
-                descricao_bruta = re.sub(r' {2,}', ' ', descricao_bruta)
-                descricao_bruta = re.sub(r'\n{3,}', '\n\n', descricao_bruta).strip()
-            
-            # Aplica a limpeza aprimorada (Remove Garantia e FAQs)
-            descricao = self.limpar_descricao_loja(descricao_bruta)
-            
-            if descricao and descricao != "Descrição indisponível.":
-                print("   ✅ Descrição capturada e limpa com sucesso.")
-            else:
-                print("   ⚠️ Aviso: Mercado Livre não renderizou a descrição nesta página.")
 
             # --- FICHA TÉCNICA ---
             print("   [LojaDoMecanico] Extraindo Ficha Técnica...")
@@ -175,7 +188,6 @@ class LojaDoMecanicoScraper(BaseScraper):
         linhas = texto_bruto.splitlines()
         linhas_limpas = []
         
-        # Frases que, se aparecerem na linha, matam a linha inteira
         frases_banidas = [
             "imagens meramente ilustrativas",
             "todas as informações divulgadas",
@@ -195,19 +207,19 @@ class LojaDoMecanicoScraper(BaseScraper):
             
             linha_lower = linha_clean.lower()
             
-            # --- NOVIDADE: Cortar o lixo do FAQ ---
-            if "perguntas frequentes" in linha_lower:
+            # --- Cortar o lixo do FAQ ---
+            if "perguntas frequentes" in linha_lower or "dúvidas frequentes" in linha_lower:
                 modo_faq = True
                 
             if modo_faq:
-                continue # Se estiver no FAQ, ignora a linha e não guarda
+                continue 
                 
             if pular_proxima:
                 pular_proxima = False
                 continue
 
-            # Se for apenas o título "Garantia" ou "Código de barras", pula esta linha e a próxima (o valor)
-            if linha_lower in ["garantia", "código de barras"]:
+            # Se for apenas o título "Garantia" ou "Código de barras", pula a linha do valor
+            if linha_lower in ["garantia", "garantia:", "código de barras", "código de barras:"]:
                 pular_proxima = True
                 continue
             
@@ -215,7 +227,7 @@ class LojaDoMecanicoScraper(BaseScraper):
             if any(banida in linha_lower for banida in frases_banidas):
                 continue
 
-            # FILTRO DE MARCA SOLTA (Ex: "WBERTOLO" ou "MTX")
+            # FILTRO DE MARCA SOLTA (Ex: "WBERTOLO")
             if len(linha_clean) < 15 and linha_clean.isupper() and " " not in linha_clean:
                 continue
 
