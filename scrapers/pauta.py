@@ -13,7 +13,7 @@ class PautaScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Pauta] Iniciando Scraper (Motor Avançado e Busca Específica)...")
+            print(f"   [Pauta] Iniciando Scraper (Motor Avançado e Busca de Sessão)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -64,11 +64,23 @@ class PautaScraper(BaseScraper):
             descricao = "Descrição indisponível."
             try:
                 descricao_bruta = driver.execute_script("""
-                    // Aponta diretamente para a classe que a Pauta usa
+                    var text = '';
+                    
+                    // Estratégia 1: Procura a sessão inteira de descrição e agrupa os parágrafos (Para a Pauta Nova)
+                    var container = document.querySelector('.product-description');
+                    if(container) {
+                        var ps = container.querySelectorAll('p');
+                        ps.forEach(p => { 
+                            if(p.innerText.trim().length > 0) text += p.innerText.trim() + '\\n\\n'; 
+                        });
+                        if(text.length > 15) return text;
+                    }
+                    
+                    // Estratégia 2: Classes antigas e específicas
                     var desc = document.querySelector('.full-desc-Pro, .descricao, #descricao-produto');
                     if(desc && desc.innerText.length > 15) return desc.innerText;
                     
-                    // Fallback
+                    // Estratégia 3: Fallback de cabeçalhos
                     var headers = document.querySelectorAll('h2, h3, h4');
                     for(var i=0; i<headers.length; i++) {
                         var t = headers[i].innerText.toLowerCase().trim();
@@ -82,10 +94,16 @@ class PautaScraper(BaseScraper):
                 
                 # Fallback em Python se o JS não pegar
                 if not descricao_bruta or len(descricao_bruta) < 15:
-                    desc_tag = soup.find(class_=re.compile(r"full-desc-Pro"))
-                    if desc_tag:
-                        for br in desc_tag.find_all("br"): br.replace_with("\n")
-                        descricao_bruta = desc_tag.get_text(separator="\n", strip=True)
+                    desc_section = soup.find('section', class_=re.compile(r"product-description"))
+                    if desc_section:
+                        ps = desc_section.find_all('p')
+                        descricao_bruta = "\n\n".join([p.get_text(separator="\n", strip=True) for p in ps if len(p.get_text(strip=True)) > 0])
+                        
+                    if not descricao_bruta or len(descricao_bruta) < 15:
+                        desc_tag = soup.find(class_=re.compile(r"full-desc-Pro"))
+                        if desc_tag:
+                            for br in desc_tag.find_all("br"): br.replace_with("\n")
+                            descricao_bruta = desc_tag.get_text(separator="\n", strip=True)
 
                 if descricao_bruta and len(descricao_bruta.strip()) > 10:
                     descricao = self.limpar_descricao_cirurgica(descricao_bruta.strip())
@@ -145,7 +163,6 @@ class PautaScraper(BaseScraper):
                         if k and v:
                             specs[k] = v
             
-            # Executa o JS como plano B para apanhar as tabelas
             if not specs:
                 specs_dict = driver.execute_script("""
                     var specs = {};
@@ -215,11 +232,9 @@ class PautaScraper(BaseScraper):
 
         texto_limpo = re.sub(r'\s+', ' ', texto_bruto).strip()
         
-        # Divide por pontuação para analisar frase a frase
         frases = re.split(r'(?<=[.!?])\s+', texto_limpo)
         frases_uteis_finais = []
         
-        # Lista Negra de termos
         termos_proibidos_frase = [
             "garantia", "devolução", "troca", "frete", "entrega", 
             "condição de venda", "pagamento", "boleto", "cartão",
@@ -234,7 +249,6 @@ class PautaScraper(BaseScraper):
             frase_lower = frase.lower()
             tem_lixo = False
             
-            # Ignora frases muito curtas
             if len(frase) < 10:
                 continue
 
