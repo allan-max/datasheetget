@@ -148,6 +148,11 @@ SITES_CONFIG = {
         'modulo': 'brastemp',
         'classe': 'BrastempScraper'
     },
+    'XBZ': {
+        'padroes_url': [r'xbzbrindes\.com\.br'],
+        'modulo': 'xbz',
+        'classe': 'XbzScraper'
+    },
     'ELGIN': {
         'padroes_url': [r'elgin\.com\.br'],
         'modulo': 'elgin',
