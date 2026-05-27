@@ -13,7 +13,7 @@ class LenovoScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Lenovo] A iniciar Scraper (Motor Híbrido Multi-Formato)...")
+            print(f"   [Lenovo] A iniciar Scraper (Motor Híbrido + Imagens Alta Resolução)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -29,8 +29,13 @@ class LenovoScraper(BaseScraper):
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
             
+            # Força o navegador a ter um tamanho Full HD para que os screenshots saiam com alta qualidade
+            options.add_argument("--window-size=1920,1080")
+            
             driver = uc.Chrome(options=options, version_main=109)
-            driver.minimize_window() 
+            
+            # Em vez de minimizar completamente (o que estraga os screenshots), definimos um tamanho fixo grande
+            driver.set_window_size(1920, 1080)
             
             print(f"   [Lenovo] A aceder a: {self.url}")
             driver.set_page_load_timeout(30)
@@ -38,14 +43,13 @@ class LenovoScraper(BaseScraper):
             
             print("   [Lenovo] A aguardar renderização...")
             try:
-                # Aguarda o título do produto em qualquer dos formatos
                 WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, "h1, .product_summary, .gallery-image"))
                 )
             except:
                 print("   ⚠️ Aviso: Elementos iniciais não encontrados rapidamente. A forçar continuação.")
             
-            # --- ROLAGEM PROGRESSIVA (Carrega imagens e painéis ocultos) ---
+            # --- ROLAGEM PROGRESSIVA ---
             print("   [Lenovo] A executar rolagem para carregar descrições...")
             for i in range(5):
                 driver.execute_script("window.scrollBy(0, 800);")
@@ -82,11 +86,10 @@ class LenovoScraper(BaseScraper):
             if title_tag: titulo = self.limpar_texto(title_tag.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- DESCRIÇÃO (ESTRATÉGIA HÍBRIDA) ---
+            # --- DESCRIÇÃO ---
             print("   [Lenovo] A extrair Descrição...")
             descricao_bruta = ""
             
-            # Estratégia A: Formato de Computadores (Lâminas de Features)
             blades = soup.find_all(class_=re.compile(r'feature-blade|feature_blade'))
             if blades:
                 linhas_desc = []
@@ -97,7 +100,6 @@ class LenovoScraper(BaseScraper):
                     if desc: linhas_desc.append(desc.get_text(separator=" ", strip=True))
                 descricao_bruta = "\n\n".join(linhas_desc)
             
-            # Estratégia B: Formato de Monitores / Acessórios (Overview Content)
             if not descricao_bruta or len(descricao_bruta) < 20:
                 overview = soup.find(class_=re.compile(r'overview_content|overview-content'))
                 if overview:
@@ -110,11 +112,10 @@ class LenovoScraper(BaseScraper):
             else:
                 print("   ⚠️ Aviso: Não foi possível extrair a descrição.")
 
-            # --- FICHA TÉCNICA (ESTRATÉGIA HÍBRIDA) ---
+            # --- FICHA TÉCNICA ---
             print("   [Lenovo] A extrair Ficha Técnica...")
             specs = {}
             
-            # Estratégia A: Computadores (specs_item)
             specs_items = soup.find_all(class_=re.compile(r'specs\\?_item|specs-item'))
             if specs_items:
                 for item in specs_items:
@@ -125,7 +126,6 @@ class LenovoScraper(BaseScraper):
                         v = self.limpar_texto(val_tag.get_text())
                         if k and v: specs[k] = v
 
-            # Estratégia B: Tabelas Genéricas (Caso seja um formato intermédio)
             if not specs:
                 for row in soup.find_all("tr"):
                     cols = row.find_all(["th", "td"])
@@ -134,9 +134,6 @@ class LenovoScraper(BaseScraper):
                         v = self.limpar_texto(cols[1].get_text())
                         if k and v: specs[k] = v
 
-            # Estratégia C: Monitores / Acessórios (Listas com marcadores UL)
-            # Como a Lenovo num formato apenas lista os specs sem "chave: valor", colocamos as frases
-            # como chaves e "Sim" ou "Incluído" como valores para não perder o dado.
             if not specs:
                 ul_specs = soup.find('ul', style=re.compile(r'list-style:disc'))
                 if ul_specs:
@@ -150,7 +147,6 @@ class LenovoScraper(BaseScraper):
                             else:
                                 specs[f"Destaque {i+1}"] = texto_li
 
-            # Filtro rigoroso de lixo Lenovo
             specs_limpas = {}
             termos_proibidos_specs = ["garantia", "linguagem", "software", "teclado", "dispositivo apontador", "optical drive", "cor"]
             for k, v in specs.items():
@@ -167,7 +163,6 @@ class LenovoScraper(BaseScraper):
             url_img = None
             caminho_imagem = None
             
-            # Tenta encontrar a imagem com diferentes seletores possíveis
             img_tags = soup.find_all('img', class_=re.compile(r'gallery-image|blade-media'))
             if not img_tags:
                 canvas = soup.find('li', class_='canvas-item')
@@ -176,14 +171,19 @@ class LenovoScraper(BaseScraper):
             for img in img_tags:
                 if img:
                     src = img.get('data-src') or img.get('src')
-                    if src and not src.endswith('.gif'): # Evita pequenos gifs de interface
+                    if src and not src.endswith('.gif'): 
                         url_img = src
                         break
 
             if url_img:
                 if url_img.startswith("//"): url_img = "https:" + url_img
                 elif url_img.startswith("/"): url_img = "https://www.lenovo.com" + url_img
-                print(f"   [Lenovo] URL da imagem encontrada: {url_img}")
+                
+                # O TRUQUE DE QUALIDADE: Limpa os parâmetros de redimensionamento do link
+                if "?" in url_img:
+                    url_img = url_img.split("?")[0]
+                    
+                print(f"   [Lenovo] URL da imagem de alta resolução encontrada: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
             if not caminho_imagem or not os.path.exists(caminho_imagem):
@@ -197,7 +197,7 @@ class LenovoScraper(BaseScraper):
                         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
                         time.sleep(1)
                         el_img.screenshot(caminho_imagem)
-                        print("   ✅ Imagem salva via screenshot!")
+                        print("   ✅ Imagem salva via screenshot em Full HD!")
                 except:
                     pass
 
