@@ -13,7 +13,7 @@ class ConsulScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Consul] A iniciar Scraper (Motor Whirlpool/VTEX)...")
+            print(f"   [Consul] A iniciar Scraper (Motor VTEX com Formatação Premium)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -45,14 +45,14 @@ class ConsulScraper(BaseScraper):
             except:
                 print("   ⚠️ Aviso: H1 não encontrado rapidamente. A forçar a extração.")
             
-            # --- 1. ROLAGEM PROGRESSIVA (Garante o carregamento de imagens e blocos dinâmicos) ---
+            # --- ROLAGEM PROGRESSIVA ---
             print("   [Consul] A vasculhar a página para contornar o Lazy Load...")
             for i in range(5):
-                driver.execute_script("window.scrollBy(0, 600);")
+                driver.execute_script("window.scrollBy(0, 700);")
                 time.sleep(1)
             
-            # --- 2. DESTRUIDOR DE BOTÕES DE CATÁLOGO ---
-            print("   [Consul] A clicar nos botões de expansão de ficha técnica...")
+            # --- DESTRUIDOR DE BOTÕES DE CATÁLOGO ---
+            print("   [Consul] A expandir conteúdo oculto...")
             driver.execute_script("""
                 var botoes = document.querySelectorAll('button, a, span, div');
                 for (var i = 0; i < botoes.length; i++) {
@@ -86,47 +86,61 @@ class ConsulScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- DESCRIÇÃO ---
-            print("   [Consul] A extrair Descrição...")
+            # --- DESCRIÇÃO (COM FORMATAÇÃO PREMIUM) ---
+            print("   [Consul] A extrair e formatar a Descrição...")
             descricao = "Descrição indisponível."
             try:
                 descricao_bruta = driver.execute_script("""
                     var text = '';
                     
-                    // Estratégia Principal: Layout Whirlpool (Cartões de Diferenciais)
+                    // 1. Tenta apanhar algum texto introdutório solto
+                    var desc = document.querySelector('.productDescriptionText, .productDescription');
+                    if (desc && desc.innerText.trim().length > 15) {
+                        text += desc.innerText.trim() + '\\n\\n';
+                    }
+                    
+                    // 2. Apanha todos os cartões de diferenciais e formata em lista
                     var cards = document.querySelectorAll('.whirlpool-styleguide-0-x-whp_styleguide-imageTextCard--texts');
                     if (cards.length > 0) {
+                        text += 'Destaques do Produto:\\n';
                         cards.forEach(c => {
                             var h3 = c.querySelector('h3');
                             var p = c.querySelector('p');
-                            if(h3) text += h3.innerText.trim() + '\\n';
-                            if(p) text += p.innerText.trim() + '\\n\\n';
+                            
+                            var tituloCard = h3 ? h3.innerText.replace(/\\n/g, ' ').trim() : '';
+                            var textoCard = p ? p.innerText.replace(/\\n/g, ' ').trim() : '';
+                            
+                            if(tituloCard && textoCard) {
+                                text += '• ' + tituloCard + ': ' + textoCard + '\\n';
+                            } else if (textoCard) {
+                                text += '• ' + textoCard + '\\n';
+                            }
                         });
-                    }
-                    
-                    // Estratégia de Fallback: VTEX Genérico
-                    if (text.length < 15) {
-                        var desc = document.querySelector('.productDescriptionText, .productDescription');
-                        if (desc) text = desc.innerText;
                     }
                     
                     return text;
                 """)
                 
+                # Fallback em Python caso o JS falhe
                 if not descricao_bruta or len(descricao_bruta.strip()) < 15:
+                    linhas = []
                     cards_bs4 = soup.find_all('div', class_=re.compile(r"imageTextCard--texts"))
                     if cards_bs4:
-                        linhas = []
+                        linhas.append("Destaques do Produto:")
                         for card in cards_bs4:
                             h3 = card.find('h3')
                             p = card.find('p')
-                            if h3: linhas.append(h3.get_text(strip=True))
-                            if p: linhas.append(p.get_text(strip=True) + "\n")
+                            tit = h3.get_text(separator=" ", strip=True) if h3 else ""
+                            txt = p.get_text(separator=" ", strip=True) if p else ""
+                            if tit and txt:
+                                linhas.append(f"• {tit}: {txt}")
+                            elif txt:
+                                linhas.append(f"• {txt}")
                         descricao_bruta = "\n".join(linhas)
 
                 if descricao_bruta and len(descricao_bruta.strip()) > 10:
                     descricao = self.limpar_descricao_consul(descricao_bruta.strip())
-                    print("   ✅ Descrição capturada com sucesso.")
+                    print("   ✅ Descrição capturada e formatada com sucesso.")
                 else:
                     print("   ⚠️ Aviso: Não foi possível extrair a descrição.")
             except Exception as e:
@@ -138,8 +152,6 @@ class ConsulScraper(BaseScraper):
             try:
                 specs_dict = driver.execute_script("""
                     var specs = {};
-                    
-                    // A Consul usa listas onde o texto é "Chave: Valor"
                     var items = document.querySelectorAll('.whp_styleguide-producttechnicaltable p, .whirlpool-styleguide-0-x-whp_styleguide-technicalSpecifications-alert p');
                     
                     if (items.length > 0) {
@@ -155,7 +167,6 @@ class ConsulScraper(BaseScraper):
                             }
                         });
                     } else {
-                        // Fallback para Tabela VTEX tradicional
                         var rows = document.querySelectorAll('tr');
                         rows.forEach(r => {
                             var th = r.querySelector('th');
@@ -262,7 +273,6 @@ class ConsulScraper(BaseScraper):
         linhas = texto_bruto.splitlines()
         linhas_limpas = []
         
-        # Filtro de jargões comerciais, notas de rodapé ([1], [2]) e Textos Legais
         termos_proibidos = [
             "textos legais", "garantia", "loja oficial", "instalação", 
             "condições exclusivas", "frete", "entrega", "pagamento", 
@@ -279,9 +289,9 @@ class ConsulScraper(BaseScraper):
             if any(termo in linha_lower for termo in termos_proibidos):
                 continue 
             
-            # Remove as marcações de rodapé como [1], [2], etc., que vêm nos textos da Consul [cite: 158, 169]
+            # Remove as marcações de rodapé [1], [2], [3]
             linha_clean = re.sub(r'\[\d+\]', '', linha_clean)
             
             linhas_limpas.append(linha_clean)
 
-        return "\n\n".join(linhas_limpas)
+        return "\n".join(linhas_limpas)
