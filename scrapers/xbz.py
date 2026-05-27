@@ -10,7 +10,7 @@ class XbzScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [XBZ] Iniciando Scraper (Extração Fina: desc-tit + my-desc-sub)...")
+            print(f"   [XBZ] Iniciando Scraper (Extração Total: desc + caracs)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -40,42 +40,42 @@ class XbzScraper(BaseScraper):
             title_tag = soup.find(['p', 'h1'], class_=re.compile(r'produto-nome'))
             if not title_tag: title_tag = soup.find('h1')
             if title_tag: titulo = self.limpar_texto(title_tag.get_text())
-            
-            # --- PROCESSAMENTO TOTAL (desc-tit + my-desc-sub) ---
-            print("   [XBZ] A extrair blocos de informação...")
+            print(f"   ✅ Título: {titulo}")
+
+            # --- EXTRAÇÃO GERAL (Descrição + Ficha Técnica) ---
+            print("   [XBZ] A extrair todos os blocos de dados...")
             descricao = "Descrição indisponível."
             specs = {}
             
-            # Procura todos os blocos 'desc'
-            blocos = soup.find_all('div', class_='desc')
+            # Procura o contêiner pai das características
+            container_caracs = soup.find('div', class_='caracs')
             
-            for bloco in blocos:
-                # Tenta encontrar o título (desc-tit)
-                tit_tag = bloco.find('p', class_='desc-tit')
-                if not tit_tag: continue
+            if container_caracs:
+                # Procura todos os blocos 'desc' dentro do contêiner
+                blocos = container_caracs.find_all('div', class_='desc')
                 
-                # Separa o título do conteúdo (o span desc-sub está dentro do p desc-tit)
-                texto_total = tit_tag.get_text(separator="|", strip=True)
-                partes = texto_total.split("|")
-                
-                # Limpa a chave (ex: remove "Descrição:")
-                chave = partes[0].replace("Descrição:", "").strip()
-                
-                # Procura o valor no span.desc-sub (prioridade para my-desc-sub)
-                val_tag = bloco.find('span', class_=re.compile(r'desc-sub'))
-                valor = val_tag.get_text(strip=True) if val_tag else (partes[1] if len(partes) > 1 else "")
-                
-                # Se for a Descrição, guarda no campo específico
-                if "descrição" in chave.lower():
-                    descricao = self.limpar_lixo_comercial(valor)
-                else:
-                    # Caso contrário, vai para a Ficha Técnica
-                    if chave and valor:
-                        specs[chave] = valor
+                for bloco in blocos:
+                    tit_tag = bloco.find('p', class_='desc-tit')
+                    if not tit_tag: continue
+                    
+                    # Extrai o título (ex: "Largura")
+                    # Remove o texto do span de dentro do p para ficar só com o título
+                    chave = tit_tag.get_text(strip=True).split(':')[0].strip()
+                    
+                    # Extrai o valor do span (desc-sub)
+                    val_tag = bloco.find('span', class_='desc-sub')
+                    valor = val_tag.get_text(strip=True).replace(':', '').strip() if val_tag else ""
+                    
+                    # Lógica de separação
+                    if "descrição" in chave.lower():
+                        descricao = self.limpar_lixo_comercial(valor)
+                    else:
+                        if chave and valor:
+                            specs[chave] = valor
 
             # Limpezas
             if hasattr(self, 'filtrar_specs'): specs = self.filtrar_specs(specs)
-            print(f"   ✅ Extração completa: {len(specs)} características encontradas.")
+            print(f"   ✅ Extração: Descrição OK | {len(specs)} características.")
 
             # --- IMAGEM ---
             url_img = None
@@ -87,6 +87,7 @@ class XbzScraper(BaseScraper):
 
             caminho_imagem = self.baixar_imagem_temp(url_img) if url_img else None
 
+            # --- FINALIZAÇÃO ---
             dados = {
                 "titulo": titulo,
                 "descricao": descricao,
