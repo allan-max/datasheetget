@@ -13,7 +13,7 @@ class MercadoLivreScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [ML] Iniciando Scraper (Motor V5 - Scroll Profundo e Modal)...")
+            print(f"   [ML] Iniciando Scraper (Motor de Extração HTML Profunda)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -54,33 +54,33 @@ class MercadoLivreScraper(BaseScraper):
             except:
                 print("   ⚠️ Aviso: H1 não encontrado rapidamente. Tentando continuar.")
             
-            # --- ROLAGEM PROGRESSIVA E PROFUNDA (Obrigatório no ML) ---
+            # --- ROLAGEM PROGRESSIVA ---
             print("   [ML] Vasculhando a página para acionar o Lazy Load...")
-            for i in range(7):
-                driver.execute_script("window.scrollBy(0, 700);")
+            for i in range(8):
+                driver.execute_script("window.scrollBy(0, 800);")
                 time.sleep(1.5)
             
-            # --- DESTRUIDOR DE BOTÕES (Abrir Modal de Características) ---
-            print("   [ML] Forçando abertura de Fichas Técnicas e Descrições...")
+            # --- DESTRUIDOR DE BOTÕES (Abre as Características Ocultas) ---
+            print("   [ML] Forçando a renderização de elementos ocultos...")
             driver.execute_script("""
-                // Procura todos os botões de "Ver todas as características" ou "Descrição completa"
                 var botoes = document.querySelectorAll('.ui-pdp-action-modal__link, [data-testid="action-modal-link"], .ui-pdp-collapsable__action');
                 for (var i = 0; i < botoes.length; i++) {
                     if(botoes[i].innerText) {
                         var txt = botoes[i].innerText.toLowerCase();
                         if(txt.includes('características') || txt.includes('descrição') || txt.includes('ver mais')) {
-                            try { 
-                                botoes[i].click(); 
-                            } catch(e) {}
+                            // Bloqueia a navegação para impedir que o site fuja da página
+                            botoes[i].addEventListener('click', function(e){ e.preventDefault(); });
+                            try { botoes[i].click(); } catch(e) {}
                         }
                     }
                 }
             """)
-            time.sleep(3) # Tempo para a janela modal abrir e renderizar os dados
+            time.sleep(3)
             
             driver.execute_script("window.scrollTo(0, 400);")
             time.sleep(0.5)
 
+            # Usa o código-fonte cru para ignorar problemas de visibilidade CSS
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
             # --- TÍTULO ---
@@ -90,71 +90,91 @@ class MercadoLivreScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- DESCRIÇÃO (100% JS) ---
+            # --- DESCRIÇÃO (EXTRATOR DIRETO DO HTML) ---
             print("   [ML] Extraindo Descrição...")
             descricao = "Descrição indisponível."
-            try:
+            descricao_bruta = ""
+            
+            # Busca especificamente pelas classes e IDs que a sua página usa
+            desc_tag = soup.find(class_=re.compile(r'ui-pdp-description__content'))
+            if not desc_tag:
+                desc_tag = soup.find('div', id='description')
+                
+            if desc_tag:
+                for br in desc_tag.find_all("br"): br.replace_with("\n")
+                descricao_bruta = desc_tag.get_text(separator="\n", strip=True)
+
+            # Fallback em JS (usando textContent que não é bloqueado por janelas modais)
+            if not descricao_bruta or len(descricao_bruta.strip()) < 15:
                 descricao_bruta = driver.execute_script("""
-                    var desc = document.querySelector('.ui-pdp-description__content, .ui-pdp-description');
-                    if (desc) return desc.innerText;
+                    var desc = document.querySelector('.ui-pdp-description__content, #description');
+                    if (desc) return desc.textContent;
                     return '';
                 """)
-                
-                if not descricao_bruta or len(descricao_bruta.strip()) < 15:
-                    desc_bs4 = soup.find(class_=re.compile(r'ui-pdp-description__content'))
-                    if desc_bs4:
-                        for br in desc_bs4.find_all("br"): br.replace_with("\n")
-                        descricao_bruta = desc_bs4.get_text(separator="\n", strip=True)
 
-                if descricao_bruta and len(descricao_bruta.strip()) > 15:
-                    descricao = self.limpar_lixo_comercial(descricao_bruta.strip())
-                    print("   ✅ Descrição capturada com sucesso.")
-                else:
-                    print("   ⚠️ Aviso: Mercado Livre não renderizou a descrição nesta página.")
-            except Exception as e:
-                print(f"   ⚠️ Erro ao extrair descrição: {e}")
+            if descricao_bruta and len(descricao_bruta.strip()) > 15:
+                descricao = self.limpar_lixo_comercial(descricao_bruta.strip())
+                print("   ✅ Descrição capturada com sucesso.")
+            else:
+                print("   ⚠️ Aviso: Mercado Livre não renderizou a descrição nesta página.")
 
-            # --- CARACTERÍSTICAS TÉCNICAS (Busca em Tabela e Modal) ---
+            # --- CARACTERÍSTICAS TÉCNICAS (EXTRATOR DE TABELAS 'andes-table') ---
             print("   [ML] Extraindo Ficha Técnica...")
             specs = {}
-            try:
-                specs_dict = driver.execute_script("""
-                    var specs = {};
-                    // Apanha as tabelas que estão na página e também as que abrem dentro do Pop-up (Modal)
-                    var rows = document.querySelectorAll('tr, .andes-table__row, .ui-vpp-striped-specs__row, .ui-pdp-specs__row');
-                    rows.forEach(r => {
-                        var th = r.querySelector('th, .andes-table__header, .ui-vpp-striped-specs__header');
-                        var td = r.querySelector('td, .andes-table__column, .ui-vpp-striped-specs__column');
-                        if(th && td) {
-                            var key = th.innerText.trim();
-                            var val = td.innerText.trim();
-                            if(key && val && key !== val) {
-                                specs[key] = val;
+            
+            # Busca todas as tabelas geradas na página e dentro do Modal
+            tabelas = soup.find_all('table', class_=re.compile(r'andes-table|ui-vpp-striped-specs'))
+            for tabela in tabelas:
+                linhas = tabela.find_all('tr')
+                for linha in linhas:
+                    th = linha.find('th')
+                    td = linha.find('td')
+                    if th and td:
+                        chave = self.limpar_texto(th.get_text(separator=" ", strip=True))
+                        valor = self.limpar_texto(td.get_text(separator=" ", strip=True))
+                        if chave and valor:
+                            specs[chave] = valor
+            
+            # Fallback em JS (usando textContent)
+            if not specs:
+                try:
+                    specs_dict = driver.execute_script("""
+                        var specs = {};
+                        var rows = document.querySelectorAll('tr.andes-table__row, tr.ui-vpp-striped-specs__row');
+                        rows.forEach(r => {
+                            var th = r.querySelector('th');
+                            var td = r.querySelector('td');
+                            if(th && td) {
+                                var key = th.textContent.trim();
+                                var val = td.textContent.trim();
+                                if(key && val && key !== val) {
+                                    specs[key] = val;
+                                }
                             }
-                        }
-                    });
-                    return specs;
-                """)
-                
-                if specs_dict:
-                    for k, v in specs_dict.items():
-                        chave_limpa = self.limpar_texto(k)
-                        valor_limpo = self.limpar_texto(v)
-                        
-                        ignorar = False
-                        termos_proibidos = ["garantia", "devolução", "frete", "prazo"]
-                        if any(t in chave_limpa.lower() for t in termos_proibidos):
-                            ignorar = True
-                            
-                        if not ignorar and chave_limpa and valor_limpo:
-                            specs[chave_limpa] = valor_limpo
-                            
-                if hasattr(self, 'filtrar_specs'):
-                    specs = self.filtrar_specs(specs)
+                        });
+                        return specs;
+                    """)
+                    if specs_dict:
+                        for k, v in specs_dict.items():
+                            chave_limpa = self.limpar_texto(k)
+                            valor_limpo = self.limpar_texto(v)
+                            if chave_limpa and valor_limpo:
+                                specs[chave_limpa] = valor_limpo
+                except: pass
+
+            # Limpa lixo comercial e formata as chaves
+            specs_limpas = {}
+            termos_proibidos = ["garantia", "devolução", "frete", "prazo"]
+            for k, v in specs.items():
+                if not any(t in k.lower() for t in termos_proibidos):
+                    specs_limpas[k] = v
                     
-                print(f"   ✅ Specs encontradas: {len(specs)} itens.")
-            except Exception as e:
-                print(f"   ⚠️ Erro ao extrair specs via JS: {e}")
+            if hasattr(self, 'filtrar_specs'):
+                specs = self.filtrar_specs(specs_limpas)
+            else:
+                specs = specs_limpas
+                
+            print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
             # --- IMAGEM ---
             print("   [ML] Extraindo Imagem...")
