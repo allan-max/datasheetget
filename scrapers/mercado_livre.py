@@ -13,7 +13,7 @@ class MercadoLivreScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [ML] Iniciando Scraper (Motor de Extração HTML Profunda)...")
+            print(f"   [ML] Iniciando Scraper (Motor de Extração HTML + Imagens Alta Resolução)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -95,7 +95,6 @@ class MercadoLivreScraper(BaseScraper):
             descricao = "Descrição indisponível."
             descricao_bruta = ""
             
-            # Busca especificamente pelas classes e IDs que a sua página usa
             desc_tag = soup.find(class_=re.compile(r'ui-pdp-description__content'))
             if not desc_tag:
                 desc_tag = soup.find('div', id='description')
@@ -104,7 +103,6 @@ class MercadoLivreScraper(BaseScraper):
                 for br in desc_tag.find_all("br"): br.replace_with("\n")
                 descricao_bruta = desc_tag.get_text(separator="\n", strip=True)
 
-            # Fallback em JS (usando textContent que não é bloqueado por janelas modais)
             if not descricao_bruta or len(descricao_bruta.strip()) < 15:
                 descricao_bruta = driver.execute_script("""
                     var desc = document.querySelector('.ui-pdp-description__content, #description');
@@ -122,7 +120,6 @@ class MercadoLivreScraper(BaseScraper):
             print("   [ML] Extraindo Ficha Técnica...")
             specs = {}
             
-            # Busca todas as tabelas geradas na página e dentro do Modal
             tabelas = soup.find_all('table', class_=re.compile(r'andes-table|ui-vpp-striped-specs'))
             for tabela in tabelas:
                 linhas = tabela.find_all('tr')
@@ -135,7 +132,6 @@ class MercadoLivreScraper(BaseScraper):
                         if chave and valor:
                             specs[chave] = valor
             
-            # Fallback em JS (usando textContent)
             if not specs:
                 try:
                     specs_dict = driver.execute_script("""
@@ -162,7 +158,6 @@ class MercadoLivreScraper(BaseScraper):
                                 specs[chave_limpa] = valor_limpo
                 except: pass
 
-            # Limpa lixo comercial e formata as chaves
             specs_limpas = {}
             termos_proibidos = ["garantia", "devolução", "frete", "prazo"]
             for k, v in specs.items():
@@ -176,21 +171,33 @@ class MercadoLivreScraper(BaseScraper):
                 
             print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
-            # --- IMAGEM ---
-            print("   [ML] Extraindo Imagem...")
+            # --- IMAGEM DE ALTA RESOLUÇÃO ---
+            print("   [ML] Extraindo Imagem em Alta Resolução...")
             url_img = None
             caminho_imagem = None
             
-            img_container = soup.find('img', class_=re.compile(r'ui-pdp-image'))
-            if img_container:
-                url_img = img_container.get('src')
+            # 1. Procura as imagens principais e tenta capturar a versão com "Zoom" (Alta Qualidade)
+            imagens = soup.find_all('img', class_=re.compile(r'ui-pdp-image|ui-pdp-gallery__figure__image'))
+            for img in imagens:
+                src = img.get('data-zoom') or img.get('src')
+                # Ignora os quadrados cinzas em base64 que o ML carrega primeiro
+                if src and not src.startswith("data:image"):
+                    url_img = src
+                    break
                 
+            # 2. Tenta pelo meta tag caso não ache
             if not url_img:
                 meta_img = soup.find("meta", property="og:image")
                 if meta_img: url_img = meta_img.get("content")
 
             if url_img:
-                print(f"   [ML] URL da imagem encontrada: {url_img}")
+                # 3. TRUQUE DO MERCADO LIVRE:
+                # O ML utiliza o último caractere antes da extensão para definir o tamanho da foto.
+                # Exemplo: -I (Pequena), -F (Média/Full), -V (Variação).
+                # Vamos substituir a letra final por -O.jpg, que força o servidor a devolver o tamanho "Original"!
+                url_img = re.sub(r'-[a-zA-Z]\.(jpg|jpeg|png|webp)$', '-O.jpg', url_img)
+                
+                print(f"   [ML] URL da imagem GIGANTE encontrada: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
             if not caminho_imagem or not os.path.exists(caminho_imagem):
