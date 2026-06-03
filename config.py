@@ -20,10 +20,16 @@ SITES_CONFIG = {
         'padroes_url': [r'amazon\.com', r'amzn\.to'],
         'modulo': 'amazon',
         'classe': 'AmazonScraper'
-    },'TSSHARA': {
+    },
+    'TSSHARA': {
         'padroes_url': [r'tsshara\.com\.br'],
         'modulo': 'tsshara',
         'classe': 'TSSharaScraper'
+    },
+    'MIDEA': {
+        'padroes_url': [r'midea\.com\.br'],
+        'modulo': 'midea',
+        'classe': 'MideaScraper'
     },
     'CASAS_BAHIA': {
         'padroes_url': [r'casasbahia\.com\.br'],
