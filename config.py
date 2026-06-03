@@ -21,6 +21,11 @@ SITES_CONFIG = {
         'modulo': 'amazon',
         'classe': 'AmazonScraper'
     },
+    'CETRO': {
+        'padroes_url': [r'cetro\.com\.br'],
+        'modulo': 'cetro',
+        'classe': 'CetroScraper'
+    },
     'TSSHARA': {
         'padroes_url': [r'tsshara\.com\.br'],
         'modulo': 'tsshara',
