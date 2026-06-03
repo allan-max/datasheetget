@@ -31,6 +31,11 @@ SITES_CONFIG = {
         'modulo': 'dufrio',
         'classe': 'DufrioScraper'
     },
+    'EPSON': {
+        'padroes_url': [r'epson\.com\.br'],
+        'modulo': 'epson',
+        'classe': 'EpsonScraper'
+    },
     'CLIMARIO': {
         'padroes_url': [r'climario\.com\.br'],
         'modulo': 'climario',
