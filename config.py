@@ -26,6 +26,16 @@ SITES_CONFIG = {
         'modulo': 'tsshara',
         'classe': 'TSSharaScraper'
     },
+    'DUFRIO': {
+        'padroes_url': [r'dufrio\.com\.br'],
+        'modulo': 'dufrio',
+        'classe': 'DufrioScraper'
+    },
+    'CLIMARIO': {
+        'padroes_url': [r'climario\.com\.br'],
+        'modulo': 'climario',
+        'classe': 'ClimarioScraper'
+    },
     'MIDEA': {
         'padroes_url': [r'midea\.com\.br'],
         'modulo': 'midea',
