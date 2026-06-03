@@ -13,7 +13,7 @@ class CetroScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Cetro] A iniciar Scraper (Motor VTEX IO com Extração de Rich Text)...")
+            print(f"   [Cetro] A iniciar Scraper (Motor VTEX IO com Extração de Rich Text Inteligente)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -85,46 +85,57 @@ class CetroScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- DESCRIÇÃO ---
+            # --- DESCRIÇÃO (LÓGICA INTELIGENTE DE TAMANHO) ---
             print("   [Cetro] A extrair Descrição e Destaques...")
             descricao = "Descrição indisponível."
             try:
                 descricao_bruta = driver.execute_script("""
                     var text = '';
                     
-                    // 1. Apanha a descrição principal da VTEX
+                    // 1. Apanha a descrição principal (se existir)
                     var desc = document.querySelector('.vtex-store-components-3-x-productDescriptionText, .productDescription');
                     if (desc && desc.innerText.trim().length > 15) {
                         text += desc.innerText.trim() + '\\n\\n';
                     }
                     
-                    // 2. Apanha todos os blocos de "Rich Text" (Destaques da máquina)
+                    // 2. Apanha todos os blocos de Rich Text e formata baseado no tamanho
                     var richTexts = document.querySelectorAll('.vtex-rich-text-0-x-paragraph');
-                    var bullets = [];
                     richTexts.forEach(p => {
                         var pText = p.innerText.trim();
-                        // Ignora textos muito curtos ou que já estão na descrição principal
-                        if (pText.length > 5 && !text.includes(pText)) {
-                            bullets.push(pText);
+                        // Ignora textos muito curtos (lixo) ou duplicados
+                        if (pText.length > 4 && !text.includes(pText)) {
+                            // Se for uma frase curta, formata como marcador (bullet)
+                            if (pText.length < 60) {
+                                text += '• ' + pText + '\\n';
+                            } 
+                            // Se for um parágrafo longo (como o da Seladora CASM 1000 SS), formata normal
+                            else {
+                                text += pText + '\\n\\n';
+                            }
                         }
                     });
                     
-                    if (bullets.length > 0) {
-                        text += 'Destaques e Funcionalidades:\\n';
-                        bullets.forEach(b => {
-                            text += '• ' + b + '\\n';
-                        });
-                    }
-                    
-                    return text;
+                    return text.trim();
                 """)
                 
                 # Fallback em Python se o JS falhar
                 if not descricao_bruta or len(descricao_bruta.strip()) < 15:
+                    linhas = []
                     desc_bs4 = soup.find('div', class_=re.compile(r"productDescriptionText"))
                     if desc_bs4:
                         for br in desc_bs4.find_all("br"): br.replace_with("\n")
-                        descricao_bruta = desc_bs4.get_text(separator="\n", strip=True)
+                        linhas.append(desc_bs4.get_text(separator="\n", strip=True))
+                        
+                    rich_bs4 = soup.find_all('p', class_=re.compile(r"vtex-rich-text-0-x-paragraph"))
+                    for p in rich_bs4:
+                        p_txt = p.get_text(separator=" ", strip=True)
+                        if p_txt and len(p_txt) > 4 and p_txt not in "\n".join(linhas):
+                            if len(p_txt) < 60:
+                                linhas.append(f"• {p_txt}")
+                            else:
+                                linhas.append(f"{p_txt}\n")
+                                
+                    descricao_bruta = "\n".join(linhas)
 
                 if descricao_bruta and len(descricao_bruta.strip()) > 10:
                     descricao = self.limpar_descricao_cetro(descricao_bruta.strip())
@@ -140,7 +151,6 @@ class CetroScraper(BaseScraper):
             try:
                 specs_dict = driver.execute_script("""
                     var specs = {};
-                    // Padrão VTEX IO
                     var names = document.querySelectorAll('.vtex-product-specifications-1-x-specificationName');
                     var values = document.querySelectorAll('.vtex-product-specifications-1-x-specificationValue');
                     
@@ -154,7 +164,6 @@ class CetroScraper(BaseScraper):
                         }
                     }
                     
-                    // Fallback Tabelas Tradicionais
                     if (Object.keys(specs).length === 0) {
                         var rows = document.querySelectorAll('tr');
                         rows.forEach(r => {
@@ -206,7 +215,6 @@ class CetroScraper(BaseScraper):
                 if meta_img: url_img = meta_img.get("content")
 
             if url_img:
-                # Na VTEX, a limpeza dos parâmetros do link ajuda a trazer a imagem com a qualidade original
                 if "?" in url_img:
                     url_img = url_img.split("?")[0]
                 print(f"   [Cetro] URL da imagem encontrada: {url_img}")
