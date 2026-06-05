@@ -26,6 +26,11 @@ SITES_CONFIG = {
         'modulo': 'cetro',
         'classe': 'CetroScraper'
     },
+    'TRAVESSA': {
+        'padroes_url': [r'travessa\.com\.br'],
+        'modulo': 'travessa',
+        'classe': 'TravessaScraper'
+    },
     'TSSHARA': {
         'padroes_url': [r'tsshara\.com\.br'],
         'modulo': 'tsshara',
