@@ -31,6 +31,11 @@ SITES_CONFIG = {
         'modulo': 'travessa',
         'classe': 'TravessaScraper'
     },
+    'MARTINSFONTES': {
+        'padroes_url': [r'martinsfontespaulista\.com\.br'],
+        'modulo': 'martinsfontes',
+        'classe': 'MartinsFontesScraper'
+    },
     'TSSHARA': {
         'padroes_url': [r'tsshara\.com\.br'],
         'modulo': 'tsshara',
