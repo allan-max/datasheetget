@@ -13,7 +13,7 @@ class AnhangueraScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Anhanguera] A iniciar Scraper (Motor FBITS com Analisador de Texto)...")
+            print(f"   [Anhanguera] A iniciar Scraper (Motor FBITS com Analisador de Texto e Imagens HQ)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -80,22 +80,19 @@ class AnhangueraScraper(BaseScraper):
             h1 = soup.find('h1', class_='product-title')
             if not h1: h1 = soup.find('h1')
             if h1:
-                # Remove a div interna de reviews que costuma sujar o título
                 div_review = h1.find('div', id='yv-review-quickreview')
                 if div_review: div_review.decompose()
                 titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- DESCRIÇÃO E FICHA TÉCNICA (EXTRAÇÃO CONJUNTA) ---
+            # --- DESCRIÇÃO E FICHA TÉCNICA ---
             print("   [Anhanguera] A extrair e analisar blocos de informação...")
             descricao = "Descrição indisponível."
             specs = {}
             
-            # Apanha todos os blocos de conteúdo de informação
             info_blocks = soup.find_all('div', class_=re.compile(r'product-information_content'))
             
             if len(info_blocks) >= 1:
-                # O primeiro bloco é tipicamente a Descrição
                 bloco_desc = info_blocks[0]
                 for br in bloco_desc.find_all("br"): br.replace_with("\n")
                 descricao_bruta = bloco_desc.get_text(separator="\n", strip=True)
@@ -104,7 +101,6 @@ class AnhangueraScraper(BaseScraper):
                     print("   ✅ Descrição capturada com sucesso.")
 
             if len(info_blocks) >= 2:
-                # O segundo bloco costuma ser a Ficha Técnica
                 bloco_specs = info_blocks[1]
                 for br in bloco_specs.find_all("br"): br.replace_with("\n")
                 linhas_specs = bloco_specs.get_text(separator="\n", strip=True).split('\n')
@@ -114,32 +110,26 @@ class AnhangueraScraper(BaseScraper):
                     linha = linha.strip()
                     if not linha: continue
                     
-                    # Analisador de Texto para extrair chaves e valores
                     if ':' in linha:
                         partes = linha.split(':', 1)
-                        # Limpa traços e espaços no início da chave
                         chave = self.limpar_texto(partes[0].replace('- ', '').strip())
-                        # Limpa ponto e vírgula no final do valor
                         valor = self.limpar_texto(partes[1].replace(';', '').strip())
                         
                         if chave and valor:
-                            # Se tiver uma categoria atual (ex: Máquina Inversora), adicionamos ao nome para não misturar com a Máscara
                             if categoria_atual:
                                 chave_final = f"{categoria_atual} - {chave}"
                             else:
                                 chave_final = chave
                             specs[chave_final] = valor
                         elif chave and not valor:
-                            # Pode ser um cabeçalho de categoria, como "- Máquina Inversora de Solda:"
                             categoria_atual = chave
                     else:
-                        pass # Ignora linhas soltas na ficha técnica que não têm formato Chave:Valor
+                        pass
                         
                 print(f"   ✅ Specs analisadas do texto: {len(specs)} itens.")
             else:
                 print("   ⚠️ Aviso: Bloco de Ficha Técnica separada não encontrado.")
 
-            # Filtros adicionais de specs
             specs_limpas = {}
             termos_proibidos = ["garantia", "referência do fornecedor", "imagens meramente ilustrativas"]
             for k, v in specs.items():
@@ -151,32 +141,39 @@ class AnhangueraScraper(BaseScraper):
             else:
                 specs = specs_limpas
 
-            # --- IMAGEM ---
-            print("   [Anhanguera] A extrair Imagem...")
+            # --- IMAGEM (ATUALIZADA PARA HQ) ---
+            print("   [Anhanguera] A extrair Imagem em Alta Resolução...")
             url_img = None
             caminho_imagem = None
             
-            # As imagens da plataforma FBITS ficam no subdomínio fbitsstatic.net
-            img_tag = soup.find('img', src=re.compile(r'fbitsstatic\.net'))
-            if img_tag:
-                url_img = img_tag.get('src') or img_tag.get('data-src')
+            # 1. Tenta capturar a tag <picture> com o data-image-zoom (A melhor qualidade)
+            picture_tag = soup.find('picture', attrs={'data-image-zoom': True})
+            if picture_tag:
+                url_img = picture_tag.get('data-image-zoom')
+                
+            # 2. Se falhar, procura a tag <img> clássica do FBITS
+            if not url_img:
+                img_tag = soup.find('img', src=re.compile(r'fbitsstatic\.net'))
+                if img_tag:
+                    url_img = img_tag.get('src') or img_tag.get('data-src')
 
+            # 3. Fallback no Meta OG
             if not url_img:
                 meta_img = soup.find("meta", property="og:image")
                 if meta_img: url_img = meta_img.get("content")
 
             if url_img:
-                # Remove parâmetros de redimensionamento para obter a qualidade máxima
+                # Remove parâmetros de redimensionamento (?w=800&h=800) para forçar o ficheiro original gigante
                 if "?" in url_img:
                     url_img = url_img.split("?")[0]
-                print(f"   [Anhanguera] URL da imagem encontrada: {url_img}")
+                print(f"   [Anhanguera] URL da imagem GIGANTE encontrada: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
             if not caminho_imagem or not os.path.exists(caminho_imagem):
                 print("   [Anhanguera] A recorrer ao Screenshot da imagem principal...")
                 try:
                     driver.execute_script("window.scrollTo(0, 0);")
-                    el_img = driver.find_element(By.CSS_SELECTOR, "img[src*='fbitsstatic.net']")
+                    el_img = driver.find_element(By.CSS_SELECTOR, "picture[data-image-zoom], img[src*='fbitsstatic.net']")
                     if el_img:
                         filename = f"temp_img_anhanguera_{int(time.time())}.png"
                         caminho_imagem = os.path.join(self.output_folder, filename)
@@ -237,7 +234,6 @@ class AnhangueraScraper(BaseScraper):
             if any(termo in linha_lower for termo in termos_proibidos):
                 continue 
             
-            # Limpa o traço inicial que a Anhanguera usa em vez de bullets reais
             if linha_clean.startswith("- "):
                 linha_clean = "• " + linha_clean[2:]
                 
