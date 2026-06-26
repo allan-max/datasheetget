@@ -21,6 +21,11 @@ SITES_CONFIG = {
         'modulo': 'amazon',
         'classe': 'AmazonScraper'
     },
+    'ANHANGUERA': {
+        'padroes_url': [r'anhangueraferramentas\.com\.br'],
+        'modulo': 'anhanguera',
+        'classe': 'AnhangueraScraper'
+    },
     'CETRO': {
         'padroes_url': [r'cetro\.com\.br'],
         'modulo': 'cetro',
