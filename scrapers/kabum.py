@@ -13,7 +13,7 @@ class KabumScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [KaBuM!] Iniciando Scraper (V3 - Motor Tailwind, Swiper e Data-TestID)...")
+            print(f"   [KaBuM!] Iniciando Scraper (V4 - Descrição Preservada e Filtro Inteligente)...")
             
             # --- SETUP ---
             if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
@@ -41,7 +41,7 @@ class KabumScraper(BaseScraper):
             except:
                 print("   ⚠️ Timeout título.")
 
-            # Scroll progressivo para forçar o Lazy Load das imagens e das descrições abaixo
+            # Scroll progressivo para forçar o Lazy Load
             for i in range(5):
                 driver.execute_script("window.scrollBy(0, 500);")
                 time.sleep(1)
@@ -71,17 +71,13 @@ class KabumScraper(BaseScraper):
             print("   [KaBuM!] Extraindo Descrição...")
             descricao = "Descrição indisponível."
             
-            # Procura bloco de descrição clássico
             div_desc = soup.find("div", id="description") or soup.find("div", id="iframeContainer")
-            
-            # Novo layout KaBuM! (Tailwind): Procura a div de texto genérica
             if not div_desc:
                 div_desc = soup.find('div', class_=re.compile(r'\[&_\*\]:text-sm|text-gray-800'))
             
             if div_desc:
-                # Converte os parágrafos (<p>) em quebras de linha reais para o PDF/Word
-                for p in div_desc.find_all("p"): p.append("\n")
-                texto_bruto = div_desc.get_text(separator=" ", strip=True)
+                # Usa separator="\n" para garantir que cada tag HTML (como H2, H3, P) vai para a sua própria linha
+                texto_bruto = div_desc.get_text(separator="\n", strip=True)
                 descricao = self.limpar_descricao_promocional(texto_bruto)
                 print("   ✅ Descrição processada.")
 
@@ -89,7 +85,6 @@ class KabumScraper(BaseScraper):
             specs = {}
             print("   [KaBuM!] Lendo especificações do novo layout...")
             
-            # Estratégia 1: Extração dos blocos estruturados (InfoPeso, InfoGarantia, etc)
             info_divs = soup.find_all('div', attrs={"data-testid": re.compile(r"^Info")})
             for div in info_divs:
                 ps = div.find_all(['p', 'span'])
@@ -99,7 +94,6 @@ class KabumScraper(BaseScraper):
                     if chave and valor:
                         specs[chave] = valor
 
-            # Estratégia 2: Extração de listas textuais ("- Chave: Valor")
             divs_texto = soup.find_all('div', class_=re.compile(r'text-gray-800|\[&_\*\]'))
             for div in divs_texto:
                 ps = div.find_all('p')
@@ -109,15 +103,12 @@ class KabumScraper(BaseScraper):
                     
                     if ':' in txt:
                         partes = txt.split(':', 1)
-                        # Remove os traços e espaços no início da chave
                         chave = self.limpar_texto(partes[0].lstrip('-').strip())
                         valor = self.limpar_texto(partes[1].strip())
                         
-                        # Filtra textos gigantes que são frases e não chaves
                         if chave and valor and len(chave) < 45:
                             specs[chave] = valor
 
-            # Estratégia 3: Fallback Layout Antigo (sc-...)
             if not specs:
                 blocos_specs = soup.find_all("div", class_=lambda c: c and "sc-" in c)
                 for bloco in blocos_specs:
@@ -137,7 +128,6 @@ class KabumScraper(BaseScraper):
                             specs[chave_atual] = txt
                             chave_atual = None
 
-            # Filtro Final
             specs_finais = {k: v for k, v in specs.items() if "garantia" not in k.lower()}
             
             if hasattr(self, 'filtrar_specs'):
@@ -150,13 +140,11 @@ class KabumScraper(BaseScraper):
             url_img = None
             caminho_imagem = None
             
-            # 1. Procura pela nova estrutura Swiper
             slide_ativo = soup.find('div', class_=re.compile(r'swiper-slide-active'))
             if slide_ativo:
                 img_tag = slide_ativo.find('img')
                 if img_tag: url_img = img_tag.get('src')
             
-            # 2. Fallbacks secundários
             if not url_img:
                 img_tag = soup.find('img', class_=re.compile(r'object-contain'))
                 if img_tag: url_img = img_tag.get('src')
@@ -167,13 +155,11 @@ class KabumScraper(BaseScraper):
 
             if url_img:
                 print(f"   [KaBuM!] URL da imagem encontrada: {url_img}")
-                # Aproveitamos o seu descarregador nativo de URLs
                 try:
                     caminho_imagem = self.baixar_imagem_temp(url_img)
                 except AttributeError:
                     pass
 
-            # 3. Screenshot de emergência (caso a URL falhe)
             if not caminho_imagem or not os.path.exists(caminho_imagem):
                 print("   [KaBuM!] Recorrendo ao Screenshot...")
                 try:
@@ -233,12 +219,12 @@ class KabumScraper(BaseScraper):
     def limpar_descricao_promocional(self, texto):
         if not texto: return ""
         
-        palavras_proibidas = [
-            "adquira", "compre", "kabum", "loja", "acesse", 
-            "clique", "confira", "aproveite", "estoque", 
-            "entrega", "garantia", "site", "www.", ".com.br",
-            "atendimento", "sac", "boleto", "cartão", "parcelamento",
-            "direitos reservados", "conteúdo da embalagem"
+        # Filtro de CTA (Call to Action) calibrado para ser menos agressivo
+        ctas_proibidos = [
+            "adquira o", "compre o", "no kabum", "na kabum", "acesse o site", 
+            "clique aqui", "confira as ofertas", "aproveite as ofertas", "estoque", 
+            "entrega rápida", "www.", ".com.br", "atendimento", "sac:", 
+            "boleto bancário", "cartão de crédito", "parcelamento", "direitos reservados"
         ]
         
         linhas_limpas = []
@@ -247,13 +233,16 @@ class KabumScraper(BaseScraper):
             linha_lower = linha_clean.lower()
             
             if len(linha_lower) < 2: continue
-            if any(bad in linha_lower for bad in palavras_proibidas):
+            
+            # Se for apenas a palavra kabum isolada ou um CTA agressivo
+            if linha_lower == "kabum!" or linha_lower == "kabum": continue
+            if any(bad in linha_lower for bad in ctas_proibidos):
                 continue
                 
-            # Troca os traços chatos da Kabum por marcadores
             if linha_clean.startswith("- "):
                 linha_clean = "• " + linha_clean[2:]
                 
             linhas_limpas.append(linha_clean)
             
-        return "\n".join(linhas_limpas)
+        # O \n\n garante que haverá espaçamento adequado entre os diferentes parágrafos e títulos
+        return "\n\n".join(linhas_limpas)
