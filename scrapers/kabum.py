@@ -12,21 +12,22 @@ class KabumScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [KaBuM!] Iniciando Scraper (V2 - Limpeza de Marketing)...")
+            print(f"   [KaBuM!] Iniciando Scraper (V2 - Limpeza de Marketing e Correção Win32)...")
             
             # --- SETUP ---
             if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
             if not os.path.exists(self.pasta_saida): os.makedirs(self.pasta_saida)
 
             options = uc.ChromeOptions()
-            options.add_argument("--headless=new") 
             options.page_load_strategy = 'eager'
             options.add_argument("--no-first-run")
             options.add_argument("--password-store=basic")
             options.add_argument("--disable-http2")
             options.add_argument("--window-size=1920,1080")
-
-            driver = uc.Chrome(options=options, version_main=144)
+            
+            # Usando a mesma versão estável do servidor (109) que usamos na Consul e ML
+            driver = uc.Chrome(options=options, version_main=109)
+            driver.set_window_size(1920, 1080)
             
             # 1. ACESSO
             print(f"   [KaBuM!] Acessando: {self.url}")
@@ -40,10 +41,21 @@ class KabumScraper(BaseScraper):
             except:
                 print("   ⚠️ Timeout título.")
 
-            # Scroll para carregar
+            # Scroll para carregar imagens preguiçosas e forçar botões
             driver.execute_script("window.scrollTo(0, 600);")
             time.sleep(1)
             driver.execute_script("window.scrollTo(0, 1200);")
+            time.sleep(1)
+            
+            # Destruidor de Botões de "Ver Mais"
+            driver.execute_script("""
+                var botoes = document.querySelectorAll('button, a, span');
+                for (var i = 0; i < botoes.length; i++) {
+                    if(botoes[i].innerText && botoes[i].innerText.toLowerCase().includes('mostrar descrição')) {
+                        try { botoes[i].click(); } catch(e) {}
+                    }
+                }
+            """)
             time.sleep(1)
 
             # 2. EXTRAÇÃO
@@ -76,7 +88,7 @@ class KabumScraper(BaseScraper):
                     if el_img: break
                 
                 if el_img:
-                    filename = "temp_img_kabum.png"
+                    filename = f"temp_img_kabum_{int(time.time())}.png"
                     caminho_imagem = os.path.join(self.pasta_saida, filename)
                     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
                     time.sleep(1)
@@ -131,6 +143,7 @@ class KabumScraper(BaseScraper):
                 "caminho_imagem_temp": caminho_imagem
             }
             
+            print("   [KaBuM!] Gerando arquivos PDF/Word...")
             arquivos = self.gerar_arquivos_finais(dados)
             
             return {
@@ -144,7 +157,6 @@ class KabumScraper(BaseScraper):
 
         except Exception as e:
             print(f"   ❌ [ERRO KABUM] {e}")
-            if driver: driver.quit()
             return {'sucesso': False, 'erro': str(e)}
         finally:
             if driver:
@@ -155,7 +167,6 @@ class KabumScraper(BaseScraper):
         """Remove frases de marketing e CTAs do site"""
         if not texto: return ""
         
-        # Palavras que, se encontradas na frase, eliminam a frase inteira
         palavras_proibidas = [
             "adquira", "compre", "kabum", "loja", "acesse", 
             "clique", "confira", "aproveite", "estoque", 
@@ -167,7 +178,6 @@ class KabumScraper(BaseScraper):
         for linha in texto.splitlines():
             linha_lower = linha.lower().strip()
             
-            # Se a linha for muito curta (lixo) ou tiver palavra proibida, pula
             if len(linha_lower) < 2: continue
             if any(bad in linha_lower for bad in palavras_proibidas):
                 continue
