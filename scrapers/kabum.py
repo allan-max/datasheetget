@@ -13,7 +13,7 @@ class KabumScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [KaBuM!] Iniciando Scraper (V4 - Descrição Preservada e Filtro Inteligente)...")
+            print(f"   [KaBuM!] Iniciando Scraper (V5 - Formatador de Texto Semântico)...")
             
             # --- SETUP ---
             if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
@@ -67,8 +67,8 @@ class KabumScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- DESCRIÇÃO ---
-            print("   [KaBuM!] Extraindo Descrição...")
+            # --- DESCRIÇÃO (COM FORMATADOR SEMÂNTICO) ---
+            print("   [KaBuM!] Extraindo e formatando Descrição...")
             descricao = "Descrição indisponível."
             
             div_desc = soup.find("div", id="description") or soup.find("div", id="iframeContainer")
@@ -76,10 +76,8 @@ class KabumScraper(BaseScraper):
                 div_desc = soup.find('div', class_=re.compile(r'\[&_\*\]:text-sm|text-gray-800'))
             
             if div_desc:
-                # Usa separator="\n" para garantir que cada tag HTML (como H2, H3, P) vai para a sua própria linha
-                texto_bruto = div_desc.get_text(separator="\n", strip=True)
-                descricao = self.limpar_descricao_promocional(texto_bruto)
-                print("   ✅ Descrição processada.")
+                descricao = self.limpar_descricao_kabum(div_desc)
+                print("   ✅ Descrição formatada visualmente.")
 
             # --- SPECS (FICHA TÉCNICA) ---
             specs = {}
@@ -216,10 +214,8 @@ class KabumScraper(BaseScraper):
                 try: driver.quit()
                 except: pass
 
-    def limpar_descricao_promocional(self, texto):
-        if not texto: return ""
-        
-        # Filtro de CTA (Call to Action) calibrado para ser menos agressivo
+    def limpar_descricao_kabum(self, div_desc):
+        """Lê a estrutura HTML da KaBuM e formata o texto com regras visuais."""
         ctas_proibidos = [
             "adquira o", "compre o", "no kabum", "na kabum", "acesse o site", 
             "clique aqui", "confira as ofertas", "aproveite as ofertas", "estoque", 
@@ -228,21 +224,43 @@ class KabumScraper(BaseScraper):
         ]
         
         linhas_limpas = []
-        for linha in texto.splitlines():
-            linha_clean = linha.strip()
-            linha_lower = linha_clean.lower()
-            
-            if len(linha_lower) < 2: continue
-            
-            # Se for apenas a palavra kabum isolada ou um CTA agressivo
-            if linha_lower == "kabum!" or linha_lower == "kabum": continue
-            if any(bad in linha_lower for bad in ctas_proibidos):
+        # Analisa os elementos pela sua importância na página
+        elementos = div_desc.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'li'])
+        
+        for el in elementos:
+            # Evita duplicação se houver elementos dentro de elementos
+            if el.parent.name in ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
                 continue
                 
-            if linha_clean.startswith("- "):
-                linha_clean = "• " + linha_clean[2:]
-                
-            linhas_limpas.append(linha_clean)
+            txt = el.get_text(separator=" ", strip=True)
+            txt_lower = txt.lower()
             
-        # O \n\n garante que haverá espaçamento adequado entre os diferentes parágrafos e títulos
-        return "\n\n".join(linhas_limpas)
+            # Filtros de lixo e marketing
+            if len(txt) < 3: continue
+            if txt_lower in ["kabum!", "kabum", "características:", "especificações:", "conteúdo da embalagem:"]: continue
+            if any(bad in txt_lower for bad in ctas_proibidos): continue
+            
+            # 1. TÍTULOS (Colocados em maiúsculas e com espaço vazio acima)
+            if el.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                if linhas_limpas: 
+                    linhas_limpas.append("") # Quebra de linha visual
+                linhas_limpas.append(txt.upper())
+                
+            # 2. LISTAS E TÓPICOS (Convertidos para bullets juntos sem espaços vazios entre si)
+            elif txt.startswith("- "):
+                linhas_limpas.append(f"• {txt[2:]}")
+                
+            # 3. PARÁGRAFOS NORMAIS
+            else:
+                # Se o parágrafo anterior for um bullet point, damos um espaço para não colar tudo
+                if linhas_limpas and linhas_limpas[-1].startswith("• "):
+                    linhas_limpas.append("")
+                elif linhas_limpas and linhas_limpas[-1] != "":
+                    linhas_limpas.append("")
+                    
+                linhas_limpas.append(txt)
+                
+        # Limpa quebras de linha triplas acidentais e devolve o texto limpo
+        resultado = "\n".join(linhas_limpas)
+        resultado = re.sub(r'\n{3,}', '\n\n', resultado)
+        return resultado.strip()
