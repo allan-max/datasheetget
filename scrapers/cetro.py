@@ -282,7 +282,9 @@ class CetroScraper(BaseScraper):
             "blog da cetro", "programa de afiliados", "cetrox", "cetro duty",
             "packblox", "suprême", "c-office", "c-res7", "privacidade de uso",
             "a cetro valoriza a privacidade", "pague com segurança",
-            "compre com tranquilidade", "rastreamento de pedidos"
+            "compre com tranquilidade", "rastreamento de pedidos", 
+            "São Paulo: (11) 3514-2600", "Rio de Janeiro: (21) 3952-5970",
+            "Belo Horizonte: (31) 2116 2300"
         ]
 
         for linha in linhas:
