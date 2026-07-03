@@ -13,7 +13,7 @@ class CetroScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Cetro] A iniciar Scraper (Motor VTEX IO com Separador de Grelhas)...")
+            print(f"   [Cetro] A iniciar Scraper (Motor VTEX IO com Separador de Grelhas e Escudo de Rodapé)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -264,10 +264,19 @@ class CetroScraper(BaseScraper):
         linhas = texto_bruto.splitlines()
         linhas_limpas = []
         
+        # Escudo de Limpeza Atualizado com Institucional, Lojas e Rodapé
         termos_proibidos = [
             "garantia", "frete", "entrega", "pagamento", "boleto", 
             "cartão", "consulte o manual", "assistência técnica",
-            "fale com um consultor", "compre agora"
+            "fale com um consultor", "compre agora",
+            "fale com um vendedor", "suporte e assistência",
+            "compre nas lojas", "produtos relacionados",
+            "matriz bauru", "loja são paulo", "loja rio de janeiro",
+            "loja belo horizonte", "telefone:", "cetro machines",
+            "china office", "compromisso permanente com o planeta",
+            "energia 100% limpa", "iniciativas são apenas o começo",
+            "próximas gerações", "newton prado", "professor luiz ignácio",
+            "são januário", "r. manaus", "zipcode", "danan street"
         ]
 
         for linha in linhas:
@@ -280,6 +289,7 @@ class CetroScraper(BaseScraper):
 
             linha_lower = linha_clean.lower()
 
+            # Se a linha contiver qualquer um dos termos proibidos, ela é eliminada
             if any(termo in linha_lower for termo in termos_proibidos):
                 continue 
             
