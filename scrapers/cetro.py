@@ -13,7 +13,7 @@ class CetroScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Cetro] A iniciar Scraper (Motor VTEX IO com Separador de Grelhas e Escudo de Rodapé)...")
+            print(f"   [Cetro] A iniciar Scraper (Motor VTEX IO com Escudo de Rodapé Máximo)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -264,7 +264,7 @@ class CetroScraper(BaseScraper):
         linhas = texto_bruto.splitlines()
         linhas_limpas = []
         
-        # Escudo de Limpeza Atualizado com Institucional, Lojas e Rodapé
+        # A LISTA NEGRA MAXIMIZADA DA CETRO (Elimina Rodapés, Marketing e Lojas)
         termos_proibidos = [
             "garantia", "frete", "entrega", "pagamento", "boleto", 
             "cartão", "consulte o manual", "assistência técnica",
@@ -276,7 +276,13 @@ class CetroScraper(BaseScraper):
             "china office", "compromisso permanente com o planeta",
             "energia 100% limpa", "iniciativas são apenas o começo",
             "próximas gerações", "newton prado", "professor luiz ignácio",
-            "são januário", "r. manaus", "zipcode", "danan street"
+            "são januário", "r. manaus", "zipcode", "danan street",
+            "china factory", "0800", "@cetro.com.br", "de segunda à sexta",
+            "atendimento filiais", "quem somos", "nossas lojas", "carreiras",
+            "blog da cetro", "programa de afiliados", "cetrox", "cetro duty",
+            "packblox", "suprême", "c-office", "c-res7", "privacidade de uso",
+            "a cetro valoriza a privacidade", "pague com segurança",
+            "compre com tranquilidade", "rastreamento de pedidos"
         ]
 
         for linha in linhas:
@@ -289,7 +295,6 @@ class CetroScraper(BaseScraper):
 
             linha_lower = linha_clean.lower()
 
-            # Se a linha contiver qualquer um dos termos proibidos, ela é eliminada
             if any(termo in linha_lower for termo in termos_proibidos):
                 continue 
             
