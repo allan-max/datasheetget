@@ -13,7 +13,7 @@ class CetroScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Cetro] A iniciar Scraper (Motor VTEX IO com Extração de Rich Text Inteligente)...")
+            print(f"   [Cetro] A iniciar Scraper (Motor VTEX IO com Separador de Grelhas)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -24,6 +24,7 @@ class CetroScraper(BaseScraper):
             options.page_load_strategy = 'eager'
             options.add_argument("--no-first-run")
             options.add_argument("--password-store=basic")
+            options.add_argument("--disable-http2")
             options.add_argument(f'--user-agent={self.headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")}')
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
@@ -85,31 +86,36 @@ class CetroScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- DESCRIÇÃO (LÓGICA INTELIGENTE DE TAMANHO) ---
-            print("   [Cetro] A extrair Descrição e Destaques...")
+            # --- DESCRIÇÃO ---
+            print("   [Cetro] A extrair Descrição Limpa...")
             descricao = "Descrição indisponível."
             try:
                 descricao_bruta = driver.execute_script("""
                     var text = '';
                     
-                    // 1. Apanha a descrição principal (se existir)
+                    // 1. Apanha a descrição principal
                     var desc = document.querySelector('.vtex-store-components-3-x-productDescriptionText, .productDescription');
                     if (desc && desc.innerText.trim().length > 15) {
                         text += desc.innerText.trim() + '\\n\\n';
                     }
                     
-                    // 2. Apanha todos os blocos de Rich Text e formata baseado no tamanho
+                    // 2. Apanha blocos de Rich Text, IGNORANDO os que pertencem à Ficha Técnica
                     var richTexts = document.querySelectorAll('.vtex-rich-text-0-x-paragraph');
                     richTexts.forEach(p => {
                         var pText = p.innerText.trim();
-                        // Ignora textos muito curtos (lixo) ou duplicados
+                        var pClass = p.className || "";
+                        
+                        // Impede que características técnicas (ex: Voltagem, Peso) contaminem a descrição
+                        if (pClass.includes('-title') || pClass.includes('-description')) {
+                            if (!pClass.includes('special-details')) {
+                                return; // É uma spec técnica, ignora!
+                            }
+                        }
+                        
                         if (pText.length > 4 && !text.includes(pText)) {
-                            // Se for uma frase curta, formata como marcador (bullet)
                             if (pText.length < 60) {
                                 text += '• ' + pText + '\\n';
-                            } 
-                            // Se for um parágrafo longo (como o da Seladora CASM 1000 SS), formata normal
-                            else {
+                            } else {
                                 text += pText + '\\n\\n';
                             }
                         }
@@ -118,64 +124,54 @@ class CetroScraper(BaseScraper):
                     return text.trim();
                 """)
                 
-                # Fallback em Python se o JS falhar
+                # Fallback em Python
                 if not descricao_bruta or len(descricao_bruta.strip()) < 15:
-                    linhas = []
                     desc_bs4 = soup.find('div', class_=re.compile(r"productDescriptionText"))
                     if desc_bs4:
                         for br in desc_bs4.find_all("br"): br.replace_with("\n")
-                        linhas.append(desc_bs4.get_text(separator="\n", strip=True))
-                        
-                    rich_bs4 = soup.find_all('p', class_=re.compile(r"vtex-rich-text-0-x-paragraph"))
-                    for p in rich_bs4:
-                        p_txt = p.get_text(separator=" ", strip=True)
-                        if p_txt and len(p_txt) > 4 and p_txt not in "\n".join(linhas):
-                            if len(p_txt) < 60:
-                                linhas.append(f"• {p_txt}")
-                            else:
-                                linhas.append(f"{p_txt}\n")
-                                
-                    descricao_bruta = "\n".join(linhas)
+                        descricao_bruta = desc_bs4.get_text(separator="\n", strip=True)
 
                 if descricao_bruta and len(descricao_bruta.strip()) > 10:
                     descricao = self.limpar_descricao_cetro(descricao_bruta.strip())
-                    print("   ✅ Descrição capturada e formatada com sucesso.")
+                    print("   ✅ Descrição formatada com sucesso.")
                 else:
                     print("   ⚠️ Aviso: Não foi possível extrair a descrição.")
             except Exception as e:
                 print(f"   ⚠️ Erro ao extrair descrição: {e}")
 
-            # --- CARACTERÍSTICAS TÉCNICAS (Grelha VTEX) ---
-            print("   [Cetro] A extrair Ficha Técnica...")
+            # --- CARACTERÍSTICAS TÉCNICAS (Híbridas) ---
+            print("   [Cetro] A extrair Ficha Técnica Dupla...")
             specs = {}
             try:
                 specs_dict = driver.execute_script("""
                     var specs = {};
+                    
+                    // 1. Extrai a Tabela VTEX Tradicional
                     var names = document.querySelectorAll('.vtex-product-specifications-1-x-specificationName');
                     var values = document.querySelectorAll('.vtex-product-specifications-1-x-specificationValue');
-                    
                     for(var i = 0; i < names.length; i++) {
                         if(names[i] && values[i]) {
-                            var key = names[i].innerText.trim();
-                            var val = values[i].innerText.trim();
-                            if(key && val && key !== val) {
-                                specs[key] = val;
-                            }
+                            specs[names[i].innerText.trim()] = values[i].innerText.trim().replace(/\\n/g, '; ');
                         }
                     }
                     
-                    if (Object.keys(specs).length === 0) {
-                        var rows = document.querySelectorAll('tr');
-                        rows.forEach(r => {
-                            var th = r.querySelector('th');
-                            var td = r.querySelector('td');
-                            if(th && td) {
-                                var key = th.innerText.trim();
-                                var val = td.innerText.trim();
-                                if(key && val && key !== val) specs[key] = val;
+                    // 2. Extrai as Especificações "Escondidas" nos blocos Visuais (Ex: Tensão, Consumo, etc)
+                    var gridTitles = document.querySelectorAll('p[class*="-title"]');
+                    gridTitles.forEach(t => {
+                        var key = t.innerText.trim();
+                        // Ignora títulos muito longos que são na verdade subtítulos de marketing
+                        if(key.length > 40) return; 
+                        
+                        // Procura o valor correspondente dentro da mesma coluna
+                        var container = t.closest('.vtex-flex-layout-0-x-flexCol');
+                        if(container) {
+                            var desc = container.querySelector('p[class*="-description"]');
+                            if(desc) {
+                                specs[key] = desc.innerText.trim().replace(/\\n/g, '; ');
                             }
-                        });
-                    }
+                        }
+                    });
+                    
                     return specs;
                 """)
                 
@@ -185,9 +181,7 @@ class CetroScraper(BaseScraper):
                         valor_limpo = self.limpar_texto(v)
                         
                         ignorar = False
-                        termos_proibidos_specs = [
-                            "garantia", "ean", "referência", "sku", "sac", "vídeo"
-                        ]
+                        termos_proibidos_specs = ["garantia", "ean", "referência", "sku", "sac", "vídeo"]
                         if any(t in chave_limpa.lower() or t in valor_limpo.lower() for t in termos_proibidos_specs):
                             ignorar = True
 
@@ -279,6 +273,9 @@ class CetroScraper(BaseScraper):
         for linha in linhas:
             linha_clean = linha.strip()
             if not linha_clean:
+                # Mantém apenas um espaço em branco para dividir parágrafos
+                if linhas_limpas and linhas_limpas[-1] != "":
+                    linhas_limpas.append("")
                 continue
 
             linha_lower = linha_clean.lower()
@@ -288,4 +285,8 @@ class CetroScraper(BaseScraper):
             
             linhas_limpas.append(linha_clean)
 
-        return "\n\n".join(linhas_limpas)
+        # Junta tudo e remove espaços em branco excessivos (limita a 2 quebras de linha no máximo)
+        resultado = "\n".join(linhas_limpas)
+        resultado = re.sub(r'\n{3,}', '\n\n', resultado)
+        
+        return resultado.strip()

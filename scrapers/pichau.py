@@ -13,7 +13,7 @@ class PichauScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Pichau] A iniciar Scraper (Motor Material-UI + Filtro CSS)...")
+            print(f"   [Pichau] A iniciar Scraper (Motor Material-UI + Filtro CSS + Espera Inteligente)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -45,7 +45,7 @@ class PichauScraper(BaseScraper):
                     EC.presence_of_element_located((By.CSS_SELECTOR, "[data-cy='product-page-title'], h1"))
                 )
             except:
-                print("   ⚠️ Aviso: Título não encontrado rapidamente. A forçar a extração.")
+                print("   ⚠️ Aviso: Título não encontrado rapidamente. A forçar continuação.")
             
             # --- ROLAGEM PROGRESSIVA ---
             print("   [Pichau] A executar rolagem profunda para carregar conteúdo Lazy Load...")
@@ -56,6 +56,23 @@ class PichauScraper(BaseScraper):
             driver.execute_script("window.scrollTo(0, 400);")
             time.sleep(0.5)
 
+            # --- SISTEMA DE ESPERA INTELIGENTE (SMART WAIT) ---
+            print("   [Pichau] A verificar se os dados do produto já foram renderizados...")
+            for tentativa in range(3):
+                soup_temp = BeautifulSoup(driver.page_source, 'html.parser')
+                tem_descricao = soup_temp.find('div', class_=re.compile(r'description-rich-text'))
+                tem_tabela = soup_temp.find('table', class_=re.compile(r'table-specification|table'))
+                
+                # Se encontrou as informações cruciais, sai do loop de espera
+                if tem_descricao or tem_tabela:
+                    print("   ✅ Dados detetados no HTML! Avançando para extração.")
+                    break
+                else:
+                    print(f"   ⏳ Site lento. Conteúdo não detetado (Tentativa {tentativa + 1}/3). A aguardar mais 4 segundos...")
+                    time.sleep(4)
+                    driver.execute_script("window.scrollBy(0, 300);") # Um pequeno empurrão para forçar o React
+            
+            # Agora sim, carrega o HTML definitivo para fazer o que for possível
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
             # --- TÍTULO ---
@@ -114,7 +131,7 @@ class PichauScraper(BaseScraper):
                             # Removemos os dois pontos finais da chave
                             chave = self.limpar_texto(th.get_text(strip=True)).rstrip(":")
                             
-                            # Tratamos as quebras de linha dentro da célula de valor (ex: compatibilidade Windows/PlayStation)
+                            # Tratamos as quebras de linha dentro da célula de valor
                             for br in td.find_all("br"): br.replace_with("; ")
                             valor = self.limpar_texto(td.get_text(separator=" ", strip=True))
                             
