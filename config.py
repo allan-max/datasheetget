@@ -51,6 +51,11 @@ SITES_CONFIG = {
         'modulo': 'dufrio',
         'classe': 'DufrioScraper'
     },
+    'PICHAU': {
+        'padroes_url': [r'pichau\.com\.br'],
+        'modulo': 'pichau',
+        'classe': 'PichauScraper'
+    },
     'EPSON': {
         'padroes_url': [r'epson\.com\.br'],
         'modulo': 'epson',
