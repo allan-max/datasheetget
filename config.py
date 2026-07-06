@@ -51,6 +51,11 @@ SITES_CONFIG = {
         'modulo': 'dufrio',
         'classe': 'DufrioScraper'
     },
+    'PROJETELAS': {
+        'padroes_url': [r'projetelas\.com\.br'],
+        'modulo': 'projetelas',
+        'classe': 'ProjetelasScraper'
+    },
     'PICHAU': {
         'padroes_url': [r'pichau\.com\.br'],
         'modulo': 'pichau',
