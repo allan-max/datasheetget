@@ -56,6 +56,11 @@ SITES_CONFIG = {
         'modulo': 'projetelas',
         'classe': 'ProjetelasScraper'
     },
+    'BRADYID': {
+        'padroes_url': [r'bradyid\.com'],
+        'modulo': 'bradyid',
+        'classe': 'BradyidScraper'
+    },
     'PICHAU': {
         'padroes_url': [r'pichau\.com\.br'],
         'modulo': 'pichau',
