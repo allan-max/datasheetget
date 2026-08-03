@@ -21,7 +21,6 @@ class FrigelarScraper(BaseScraper):
             if not os.path.exists(self.output_folder): 
                 os.makedirs(self.output_folder)
 
-            # --- Configuração Selenium ---
             opts = Options()
             opts.add_argument("--headless=new") 
             opts.add_argument("--no-sandbox")
@@ -33,7 +32,6 @@ class FrigelarScraper(BaseScraper):
             driver = webdriver.Chrome(options=opts)
             driver.get(self.url)
 
-            # 1. Espera o título carregar
             try:
                 WebDriverWait(driver, 15).until(
                     EC.presence_of_element_located((By.CLASS_NAME, "product-name"))
@@ -41,7 +39,6 @@ class FrigelarScraper(BaseScraper):
             except:
                 print("   [Frigelar] Aviso: Timeout esperando título.")
 
-            # 2. Scroll para baixo (Essencial para carregar Descrição e Imagens em Lazy Load)
             driver.execute_script("window.scrollTo(0, 600);")
             time.sleep(1)
             driver.execute_script("window.scrollTo(0, 1500);")
@@ -55,13 +52,15 @@ class FrigelarScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- 2. IMAGEM ---
+            # --- 2. IMAGEM (CORRIGIDO) ---
             print("   [Frigelar] Extraindo Imagem...")
             url_img = None
             
-            img_tag = soup.find("img", attrs={"data-bind": re.compile("ccResizeImage")})
+            # Procura pelo novo formato do visualizador de imagens
+            img_tag = soup.find("img", class_=re.compile(r'ccz-small|ccLazyLoaded'))
             if not img_tag:
-                img_tag = soup.find("div", id="prod-img-container").find("img") if soup.find("div", id="prod-img-container") else None
+                img_wrapper = soup.find("div", id="cc_img__resize_wrapper")
+                if img_wrapper: img_tag = img_wrapper.find("img")
 
             if img_tag:
                 src = img_tag.get("src") or img_tag.get("data-src")
@@ -70,13 +69,15 @@ class FrigelarScraper(BaseScraper):
                         url_img = "https://www.frigelar.com.br" + src
                     else:
                         url_img = src
-
+                        
             caminho_imagem = None
             if url_img:
+                # Remove parâmetros de miniatura para obter a imagem em alta resolução
+                url_img = url_img.split("&height")[0]
                 print(f"   [Frigelar] URL da imagem encontrada: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
-            # --- 3. DESCRIÇÃO (Limpeza Cirúrgica) ---
+            # --- 3. DESCRIÇÃO ---
             print("   [Frigelar] Extraindo Descrição...")
             descricao_bruta = ""
             desc_container = soup.find("div", class_="frigelar-product-description-section")
@@ -86,12 +87,11 @@ class FrigelarScraper(BaseScraper):
                 for h in desc_container.find_all(["h1", "h2", "h3"]):
                     if "vantagens" in h.get_text().lower() or "confira" in h.get_text().lower():
                         h.extract()
-
                 descricao_bruta = desc_container.get_text(separator="\n")
 
             descricao = self.limpar_descricao_cirurgica(descricao_bruta)
 
-            # --- 4. FICHA TÉCNICA (EXTRAÇÃO ATIVADA) ---
+            # --- 4. FICHA TÉCNICA ---
             print("   [Frigelar] Extraindo Ficha Técnica...")
             specs = {}
             tabela_specs = soup.find('table', class_=re.compile(r'props-table'))
@@ -104,21 +104,17 @@ class FrigelarScraper(BaseScraper):
                         chave = self.limpar_texto(tds[0].get_text())
                         valor = self.limpar_texto(tds[1].get_text())
                         
-                        # Filtro rigoroso contra Garantia e Condições de Venda
                         ignorar = False
                         termos_proibidos_specs = ["garantia", "manutenção", "sac", "nota fiscal", "assistência", "pagamento"]
                         
                         if any(t in chave.lower() or t in valor.lower() for t in termos_proibidos_specs):
                             ignorar = True
-                            
-                        # Limpa links extras inseridos acidentalmente no HTML
                         if "clique aqui" in valor.lower() or "http" in valor.lower():
                             ignorar = True
                             
                         if not ignorar and chave and valor:
                             specs[chave] = valor
 
-            # Aplica o filtro padrão do BaseScraper para uma camada extra de segurança
             if hasattr(self, 'filtrar_specs'):
                 specs = self.filtrar_specs(specs)
                 
@@ -152,16 +148,11 @@ class FrigelarScraper(BaseScraper):
                 driver.quit()
 
     def limpar_descricao_cirurgica(self, texto_bruto):
-        """Remove apenas frases com termos proibidos, mantendo o resto."""
         if not texto_bruto: return "Descrição indisponível."
-
         texto_limpo = re.sub(r'\s+', ' ', texto_bruto).strip()
-        
-        # Divide por pontuação para analisar frase a frase
         frases = re.split(r'(?<=[.!?])\s+', texto_limpo)
         frases_aprovadas = []
         
-        # Lista Negra baseada no seu pedido
         termos_proibidos = [
             "garantia", "meses", "confira as vantagens", "assista o vídeo",
             "código frigelar", "esconder produto", "fale conosco",
@@ -173,11 +164,7 @@ class FrigelarScraper(BaseScraper):
         for frase in frases:
             frase_lower = frase.lower()
             contem_proibido = False
-            
-            # Se a frase for muito curta (ex: "Benefícios"), ignora
-            if len(frase) < 4:
-                continue
-
+            if len(frase) < 4: continue
             for termo in termos_proibidos:
                 if termo in frase_lower:
                     contem_proibido = True
