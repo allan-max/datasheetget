@@ -175,9 +175,13 @@ class FrigelarScraper(BaseScraper):
 
             # --- FINALIZAÇÃO ---
             
-            # TRUQUE PARA O PDF: Forçar o caminho absoluto para o gerador de PDF não se perder
+            # TRUQUE PARA O PDF: Forçar o caminho absoluto e inverter as barras para o padrão Web/PDF
             if caminho_imagem and os.path.exists(caminho_imagem):
-                caminho_imagem = os.path.abspath(caminho_imagem)
+                caminho_absoluto = os.path.abspath(caminho_imagem)
+                caminho_imagem = caminho_absoluto.replace("\\", "/")
+                
+                # Se mesmo assim o seu gerador (ex: pdfkit) falhar, remova o '#' da linha abaixo:
+                # caminho_imagem = f"file:///{caminho_imagem}"
 
             dados = {
                 "titulo": titulo,
