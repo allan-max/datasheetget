@@ -13,7 +13,7 @@ class FrigelarScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Frigelar] Iniciando Scraper (Motor Oracle Cloud Commerce e Screenshot)...")
+            print(f"   [Frigelar] Iniciando Scraper (Motor Oracle Cloud Commerce e Busca Direta de Imagem)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -59,30 +59,28 @@ class FrigelarScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- 2. IMAGEM (ENGENHARIA REVERSA ORACLE) ---
+            # --- 2. IMAGEM (BUSCA DIRETA NA TAG E LIMPEZA DE PARÂMETROS) ---
             print("   [Frigelar] Extraindo Imagem...")
             url_img = None
             
-            # Vai direto ao wrapper específico que enviou no HTML
-            img_wrapper = soup.find("div", id="cc_img__resize_wrapper")
-            if img_wrapper:
-                img_tag = img_wrapper.find("img")
-                if img_tag:
-                    src = img_tag.get("data-src") or img_tag.get("src")
-                    if src:
-                        # Extrai o caminho original da imagem ignorando o redimensionador
-                        match = re.search(r'source=([^&]+)', src)
-                        if match:
-                            url_img = "https://www.frigelar.com.br" + match.group(1)
-                        else:
-                            if src.startswith("/"):
-                                url_img = "https://www.frigelar.com.br" + src
-                            else:
-                                url_img = src
+            # Procura diretamente por uma imagem que tenha o padrão de diretório do OCC (Oracle Cloud Commerce)
+            img_tag = soup.find("img", src=re.compile(r'source=/file/'))
+            if not img_tag:
+                img_tag = soup.find("img", attrs={"data-src": re.compile(r'source=/file/')})
+                
+            if img_tag:
+                raw_src = img_tag.get("src") or img_tag.get("data-src")
+                if raw_src:
+                    # Corta pelo '&' para remover &height=X&width=Y e forçar a imagem original
+                    clean_src = raw_src.split('&')[0]
+                    if clean_src.startswith("/"):
+                        url_img = "https://www.frigelar.com.br" + clean_src
+                    else:
+                        url_img = clean_src
 
             caminho_imagem = None
             if url_img:
-                print(f"   [Frigelar] URL da imagem original limpa encontrada: {url_img}")
+                print(f"   [Frigelar] URL da imagem original encontrada: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
             # PLANO B: Se o download falhar, tira uma fotografia à imagem (Screenshot)
@@ -90,7 +88,8 @@ class FrigelarScraper(BaseScraper):
                 print("   [Frigelar] A recorrer ao Screenshot da imagem principal...")
                 try:
                     driver.execute_script("window.scrollTo(0, 0);")
-                    el_img = driver.find_element(By.CSS_SELECTOR, "#cc_img__resize_wrapper img")
+                    # Tenta fotografar a imagem principal
+                    el_img = driver.find_element(By.CSS_SELECTOR, "img[src*='source=/file/']")
                     if el_img:
                         filename = f"temp_img_frigelar_{int(time.time())}.png"
                         caminho_imagem = os.path.join(self.output_folder, filename)
