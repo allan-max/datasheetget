@@ -1,6 +1,5 @@
 # scrapers/frigelar.py
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -14,24 +13,31 @@ class FrigelarScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Frigelar] Iniciando Scraper...")
+            print(f"   [Frigelar] Iniciando Scraper (Motor Oracle Cloud Commerce e Screenshot)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
             if not os.path.exists(self.output_folder): 
                 os.makedirs(self.output_folder)
 
-            opts = Options()
-            opts.add_argument("--headless=new") 
-            opts.add_argument("--no-sandbox")
-            opts.add_argument("--disable-dev-shm-usage")
-            opts.add_argument("--window-size=1920,1080")
-            opts.add_argument('--ignore-certificate-errors')
-            opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
-
-            driver = webdriver.Chrome(options=opts)
+            # --- Configuração Selenium Blindado ---
+            options = uc.ChromeOptions()
+            options.page_load_strategy = 'eager'
+            options.add_argument("--no-first-run")
+            options.add_argument("--password-store=basic")
+            options.add_argument(f'--user-agent={self.headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")}')
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--window-size=1920,1080")
+            
+            driver = uc.Chrome(options=options, version_main=109)
+            driver.set_window_size(1920, 1080)
+            
+            print(f"   [Frigelar] Acessando: {self.url}")
             driver.get(self.url)
 
+            # 1. Espera o título carregar
             try:
                 WebDriverWait(driver, 15).until(
                     EC.presence_of_element_located((By.CLASS_NAME, "product-name"))
@@ -39,6 +45,7 @@ class FrigelarScraper(BaseScraper):
             except:
                 print("   [Frigelar] Aviso: Timeout esperando título.")
 
+            # 2. Scroll para baixo (Essencial para carregar Descrição e Imagens em Lazy Load)
             driver.execute_script("window.scrollTo(0, 600);")
             time.sleep(1)
             driver.execute_script("window.scrollTo(0, 1500);")
@@ -52,32 +59,49 @@ class FrigelarScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- 2. IMAGEM (CORRIGIDO) ---
+            # --- 2. IMAGEM (ENGENHARIA REVERSA ORACLE) ---
             print("   [Frigelar] Extraindo Imagem...")
             url_img = None
             
-            # Procura pelo novo formato do visualizador de imagens
-            img_tag = soup.find("img", class_=re.compile(r'ccz-small|ccLazyLoaded'))
-            if not img_tag:
-                img_wrapper = soup.find("div", id="cc_img__resize_wrapper")
-                if img_wrapper: img_tag = img_wrapper.find("img")
+            # Vai direto ao wrapper específico que enviou no HTML
+            img_wrapper = soup.find("div", id="cc_img__resize_wrapper")
+            if img_wrapper:
+                img_tag = img_wrapper.find("img")
+                if img_tag:
+                    src = img_tag.get("data-src") or img_tag.get("src")
+                    if src:
+                        # Extrai o caminho original da imagem ignorando o redimensionador
+                        match = re.search(r'source=([^&]+)', src)
+                        if match:
+                            url_img = "https://www.frigelar.com.br" + match.group(1)
+                        else:
+                            if src.startswith("/"):
+                                url_img = "https://www.frigelar.com.br" + src
+                            else:
+                                url_img = src
 
-            if img_tag:
-                src = img_tag.get("src") or img_tag.get("data-src")
-                if src:
-                    if src.startswith("/"):
-                        url_img = "https://www.frigelar.com.br" + src
-                    else:
-                        url_img = src
-                        
             caminho_imagem = None
             if url_img:
-                # Remove parâmetros de miniatura para obter a imagem em alta resolução
-                url_img = url_img.split("&height")[0]
-                print(f"   [Frigelar] URL da imagem encontrada: {url_img}")
+                print(f"   [Frigelar] URL da imagem original limpa encontrada: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
-            # --- 3. DESCRIÇÃO ---
+            # PLANO B: Se o download falhar, tira uma fotografia à imagem (Screenshot)
+            if not caminho_imagem or not os.path.exists(caminho_imagem):
+                print("   [Frigelar] A recorrer ao Screenshot da imagem principal...")
+                try:
+                    driver.execute_script("window.scrollTo(0, 0);")
+                    el_img = driver.find_element(By.CSS_SELECTOR, "#cc_img__resize_wrapper img")
+                    if el_img:
+                        filename = f"temp_img_frigelar_{int(time.time())}.png"
+                        caminho_imagem = os.path.join(self.output_folder, filename)
+                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
+                        time.sleep(1)
+                        el_img.screenshot(caminho_imagem)
+                        print("   ✅ Imagem salva via screenshot!")
+                except Exception as e:
+                    print(f"   ⚠️ Falha no screenshot: {e}")
+
+            # --- 3. DESCRIÇÃO (Limpeza Cirúrgica) ---
             print("   [Frigelar] Extraindo Descrição...")
             descricao_bruta = ""
             desc_container = soup.find("div", class_="frigelar-product-description-section")
@@ -87,6 +111,7 @@ class FrigelarScraper(BaseScraper):
                 for h in desc_container.find_all(["h1", "h2", "h3"]):
                     if "vantagens" in h.get_text().lower() or "confira" in h.get_text().lower():
                         h.extract()
+
                 descricao_bruta = desc_container.get_text(separator="\n")
 
             descricao = self.limpar_descricao_cirurgica(descricao_bruta)
@@ -104,11 +129,14 @@ class FrigelarScraper(BaseScraper):
                         chave = self.limpar_texto(tds[0].get_text())
                         valor = self.limpar_texto(tds[1].get_text())
                         
+                        # Filtro rigoroso contra Garantia e Condições de Venda
                         ignorar = False
                         termos_proibidos_specs = ["garantia", "manutenção", "sac", "nota fiscal", "assistência", "pagamento"]
                         
                         if any(t in chave.lower() or t in valor.lower() for t in termos_proibidos_specs):
                             ignorar = True
+                            
+                        # Limpa links extras inseridos acidentalmente no HTML
                         if "clique aqui" in valor.lower() or "http" in valor.lower():
                             ignorar = True
                             
@@ -145,11 +173,16 @@ class FrigelarScraper(BaseScraper):
             return {'sucesso': False, 'erro': str(e)}
         finally:
             if driver:
-                driver.quit()
+                try: driver.quit()
+                except: pass
 
     def limpar_descricao_cirurgica(self, texto_bruto):
+        """Remove apenas frases com termos proibidos, mantendo o resto."""
         if not texto_bruto: return "Descrição indisponível."
+
         texto_limpo = re.sub(r'\s+', ' ', texto_bruto).strip()
+        
+        # Divide por pontuação para analisar frase a frase
         frases = re.split(r'(?<=[.!?])\s+', texto_limpo)
         frases_aprovadas = []
         
@@ -164,13 +197,16 @@ class FrigelarScraper(BaseScraper):
         for frase in frases:
             frase_lower = frase.lower()
             contem_proibido = False
-            if len(frase) < 4: continue
+            
+            if len(frase) < 4:
+                continue
+
             for termo in termos_proibidos:
                 if termo in frase_lower:
                     contem_proibido = True
                     break
             
             if not contem_proibido:
-                frases_aprovadas.append(frase)
+                frases_aprovadas.append(frase.strip())
 
         return "\n\n".join(frases_aprovadas)
