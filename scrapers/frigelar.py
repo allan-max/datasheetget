@@ -13,7 +13,7 @@ class FrigelarScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Frigelar] Iniciando Scraper (Bypass Direto no Servidor de Arquivos OCC)...")
+            print(f"   [Frigelar] Iniciando Scraper (Bypass Absoluto por Nova Aba)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -45,7 +45,7 @@ class FrigelarScraper(BaseScraper):
             except:
                 print("   [Frigelar] Aviso: Timeout esperando título.")
 
-            # 2. Scroll para baixo (Essencial para carregar Descrição e Imagens em Lazy Load)
+            # 2. Scroll para baixo
             driver.execute_script("window.scrollTo(0, 600);")
             time.sleep(1)
             driver.execute_script("window.scrollTo(0, 1500);")
@@ -63,14 +63,14 @@ class FrigelarScraper(BaseScraper):
             print("   [Frigelar] Extraindo Imagem...")
             url_img = None
             
-            img_tag = soup.find("img", src=re.compile(r'source=/file/'))
+            # Dá prioridade ao data-src, pois é onde a imagem de alta resolução se esconde antes do lazy load atuar
+            img_tag = soup.find("img", attrs={"data-src": re.compile(r'source=/file/')})
             if not img_tag:
-                img_tag = soup.find("img", attrs={"data-src": re.compile(r'source=/file/')})
+                img_tag = soup.find("img", src=re.compile(r'source=/file/'))
                 
             if img_tag:
-                raw_src = img_tag.get("src") or img_tag.get("data-src")
+                raw_src = img_tag.get("data-src") or img_tag.get("src")
                 if raw_src:
-                    # EXTRAÇÃO DIRETA: Retira apenas o diretório base (/file/...) ignorando a API de redimensionamento
                     match = re.search(r'source=(/file/[^&]+)', raw_src)
                     if match:
                         url_img = "https://www.frigelar.com.br" + match.group(1)
@@ -81,50 +81,45 @@ class FrigelarScraper(BaseScraper):
                         else:
                             url_img = clean_src
 
+            if not url_img:
+                meta_img = soup.find("meta", property="og:image")
+                if meta_img: url_img = meta_img.get("content")
+
             caminho_imagem = None
             if url_img:
                 print(f"   [Frigelar] URL Raiz do Servidor encontrada: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
-            # --- PLANO B: SCREENSHOT SEM MENUS (Filtro de Ficheiros Corrompidos) ---
-            # Verifica se não baixou ou se baixou um arquivo muito pequeno (erro do WAF)
-            if not caminho_imagem or not os.path.exists(caminho_imagem) or os.path.getsize(caminho_imagem) < 1024:
-                print("   [Frigelar] Download bloqueado pela Frigelar. Iniciando Plano de Screenshot...")
+            # --- PLANO B: SCREENSHOT NA NOVA ABA (BYPASS WAF/CLOUDFLARE E PIXEIS BRANCOS) ---
+            # Se falhar ou baixar um ficheiro com menos de 5KB (o típico pixel transparente do Lazy Load)
+            if not caminho_imagem or not os.path.exists(caminho_imagem) or os.path.getsize(caminho_imagem) < 5000:
+                print("   [Frigelar] Download bloqueado/corrompido. Iniciando Bypass de Nova Aba...")
                 try:
-                    # Esconde o cabeçalho para não ficar por cima da foto da máquina
-                    driver.execute_script("""
-                        var menus = document.querySelectorAll('header, nav, .header, [style*="position: fixed"], [style*="position: sticky"], .z-50');
-                        menus.forEach(m => m.style.display = 'none');
-                    """)
-                    driver.execute_script("window.scrollTo(0, 0);")
-                    time.sleep(1)
-                    
-                    imagens_candidatas = driver.find_elements(By.CSS_SELECTOR, "img[src*='source=/file/'], #cc_img__resize_wrapper img")
-                    
-                    el_img = None
-                    for img in imagens_candidatas:
-                        if img.is_displayed() and img.size['width'] > 50:
-                            el_img = img
-                            break
-                            
-                    if el_img:
+                    if url_img:
+                        # Abre a imagem isolada num novo separador
+                        driver.execute_script(f"window.open('{url_img}', '_blank');")
+                        driver.switch_to.window(driver.window_handles[1])
+                        time.sleep(3) # Aguarda renderizar perfeitamente no centro
+                        
+                        el_img = driver.find_element(By.TAG_NAME, "img")
                         filename = f"temp_img_frigelar_{int(time.time())}.png"
-                        caminho_imagem_fallback = os.path.join(self.output_folder, filename)
+                        caminho_imagem_aba = os.path.join(self.output_folder, filename)
                         
-                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
-                        time.sleep(1)
-                        el_img.screenshot(caminho_imagem_fallback)
+                        el_img.screenshot(caminho_imagem_aba)
                         
-                        if os.path.exists(caminho_imagem_fallback) and os.path.getsize(caminho_imagem_fallback) > 1024:
-                            caminho_imagem = caminho_imagem_fallback
-                            print("   ✅ Imagem capturada com sucesso via screenshot!")
+                        driver.close()
+                        driver.switch_to.window(driver.window_handles[0])
+                        
+                        if os.path.exists(caminho_imagem_aba) and os.path.getsize(caminho_imagem_aba) > 1024:
+                            caminho_imagem = caminho_imagem_aba
+                            print("   ✅ Imagem capturada com sucesso no Bypass da Nova Aba!")
                         else:
-                            print("   ⚠️ Screenshot capturou uma imagem corrompida.")
-                    else:
-                        print("   ⚠️ Nenhuma imagem física visível na tela para fotografar.")
-                        
+                            print("   ⚠️ O Bypass da Nova Aba capturou um ficheiro corrompido.")
                 except Exception as e:
-                    print(f"   ⚠️ Falha no processo de screenshot: {e}")
+                    print(f"   ⚠️ Falha no Bypass da Nova Aba: {e}")
+                    if len(driver.window_handles) > 1:
+                        driver.close()
+                        driver.switch_to.window(driver.window_handles[0])
 
             # --- 3. DESCRIÇÃO (Limpeza Cirúrgica) ---
             print("   [Frigelar] Extraindo Descrição...")
@@ -136,7 +131,6 @@ class FrigelarScraper(BaseScraper):
                 for h in desc_container.find_all(["h1", "h2", "h3"]):
                     if "vantagens" in h.get_text().lower() or "confira" in h.get_text().lower():
                         h.extract()
-
                 descricao_bruta = desc_container.get_text(separator="\n")
 
             descricao = self.limpar_descricao_cirurgica(descricao_bruta)
@@ -156,18 +150,13 @@ class FrigelarScraper(BaseScraper):
                         
                         ignorar = False
                         termos_proibidos_specs = ["garantia", "manutenção", "sac", "nota fiscal", "assistência", "pagamento"]
+                        if any(t in chave.lower() or t in valor.lower() for t in termos_proibidos_specs): ignorar = True
+                        if "clique aqui" in valor.lower() or "http" in valor.lower(): ignorar = True
                         
-                        if any(t in chave.lower() or t in valor.lower() for t in termos_proibidos_specs):
-                            ignorar = True
-                        if "clique aqui" in valor.lower() or "http" in valor.lower():
-                            ignorar = True
-                            
                         if not ignorar and chave and valor:
                             specs[chave] = valor
 
-            if hasattr(self, 'filtrar_specs'):
-                specs = self.filtrar_specs(specs)
-                
+            if hasattr(self, 'filtrar_specs'): specs = self.filtrar_specs(specs)
             print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
             # --- FINALIZAÇÃO ---
@@ -177,18 +166,9 @@ class FrigelarScraper(BaseScraper):
                 "caracteristicas": specs,
                 "caminho_imagem_temp": caminho_imagem
             }
-
             print("   [Frigelar] Gerando arquivos finais...")
             arquivos = self.gerar_arquivos_finais(dados)
-
-            return {
-                'sucesso': True,
-                'titulo': titulo,
-                'descricao': descricao,
-                'caracteristicas': specs,
-                'total_imagens': 1 if caminho_imagem else 0,
-                'arquivos': arquivos
-            }
+            return {'sucesso': True, 'titulo': titulo, 'descricao': descricao, 'caracteristicas': specs, 'total_imagens': 1 if caminho_imagem else 0, 'arquivos': arquivos}
 
         except Exception as e:
             print(f"   ❌ [ERRO FRIGELAR] {e}")
@@ -200,11 +180,9 @@ class FrigelarScraper(BaseScraper):
 
     def limpar_descricao_cirurgica(self, texto_bruto):
         if not texto_bruto: return "Descrição indisponível."
-
         texto_limpo = re.sub(r'\s+', ' ', texto_bruto).strip()
         frases = re.split(r'(?<=[.!?])\s+', texto_limpo)
         frases_aprovadas = []
-        
         termos_proibidos = [
             "garantia", "meses", "confira as vantagens", "assista o vídeo",
             "código frigelar", "esconder produto", "fale conosco",
@@ -212,19 +190,9 @@ class FrigelarScraper(BaseScraper):
             "condições de pagamento", "boleto", "cartão", "entrega",
             "instalação", "pagamento"
         ]
-
         for frase in frases:
             frase_lower = frase.lower()
-            contem_proibido = False
-            
             if len(frase) < 4: continue
-
-            for termo in termos_proibidos:
-                if termo in frase_lower:
-                    contem_proibido = True
-                    break
-            
-            if not contem_proibido:
+            if not any(termo in frase_lower for termo in termos_proibidos):
                 frases_aprovadas.append(frase.strip())
-
         return "\n\n".join(frases_aprovadas)
