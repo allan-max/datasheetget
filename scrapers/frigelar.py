@@ -13,7 +13,7 @@ class FrigelarScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Frigelar] Iniciando Scraper (Bypass de Imagem por Injeção HTML)...")
+            print(f"   [Frigelar] Iniciando Scraper (Bypass de Imagem por Injeção HTML + Correção PDF)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -174,15 +174,28 @@ class FrigelarScraper(BaseScraper):
             print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
             # --- FINALIZAÇÃO ---
+            
+            # TRUQUE PARA O PDF: Forçar o caminho absoluto para o gerador de PDF não se perder
+            if caminho_imagem and os.path.exists(caminho_imagem):
+                caminho_imagem = os.path.abspath(caminho_imagem)
+
             dados = {
                 "titulo": titulo,
                 "descricao": descricao,
                 "caracteristicas": specs,
                 "caminho_imagem_temp": caminho_imagem
             }
+            
             print("   [Frigelar] Gerando arquivos finais...")
             arquivos = self.gerar_arquivos_finais(dados)
-            return {'sucesso': True, 'titulo': titulo, 'descricao': descricao, 'caracteristicas': specs, 'total_imagens': 1 if caminho_imagem else 0, 'arquivos': arquivos}
+            return {
+                'sucesso': True, 
+                'titulo': titulo, 
+                'descricao': descricao, 
+                'caracteristicas': specs, 
+                'total_imagens': 1 if caminho_imagem else 0, 
+                'arquivos': arquivos
+            }
 
         except Exception as e:
             print(f"   ❌ [ERRO FRIGELAR] {e}")
