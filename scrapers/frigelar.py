@@ -13,7 +13,7 @@ class FrigelarScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Frigelar] Iniciando Scraper (Bypass Absoluto por Nova Aba)...")
+            print(f"   [Frigelar] Iniciando Scraper (Bypass de Imagem por Injeção HTML)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -45,7 +45,7 @@ class FrigelarScraper(BaseScraper):
             except:
                 print("   [Frigelar] Aviso: Timeout esperando título.")
 
-            # 2. Scroll para baixo
+            # 2. Scroll para baixo (Essencial para carregar Descrição e Imagens em Lazy Load)
             driver.execute_script("window.scrollTo(0, 600);")
             time.sleep(1)
             driver.execute_script("window.scrollTo(0, 1500);")
@@ -63,7 +63,6 @@ class FrigelarScraper(BaseScraper):
             print("   [Frigelar] Extraindo Imagem...")
             url_img = None
             
-            # Dá prioridade ao data-src, pois é onde a imagem de alta resolução se esconde antes do lazy load atuar
             img_tag = soup.find("img", attrs={"data-src": re.compile(r'source=/file/')})
             if not img_tag:
                 img_tag = soup.find("img", src=re.compile(r'source=/file/'))
@@ -90,36 +89,51 @@ class FrigelarScraper(BaseScraper):
                 print(f"   [Frigelar] URL Raiz do Servidor encontrada: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
-            # --- PLANO B: SCREENSHOT NA NOVA ABA (BYPASS WAF/CLOUDFLARE E PIXEIS BRANCOS) ---
-            # Se falhar ou baixar um ficheiro com menos de 5KB (o típico pixel transparente do Lazy Load)
+            # --- PLANO B: INJEÇÃO DE OVERLAY (Imune a bloqueadores de popup) ---
             if not caminho_imagem or not os.path.exists(caminho_imagem) or os.path.getsize(caminho_imagem) < 5000:
-                print("   [Frigelar] Download bloqueado/corrompido. Iniciando Bypass de Nova Aba...")
+                print("   [Frigelar] Download bloqueado. Iniciando Bypass de Injeção de Tela...")
                 try:
                     if url_img:
-                        # Abre a imagem isolada num novo separador
-                        driver.execute_script(f"window.open('{url_img}', '_blank');")
-                        driver.switch_to.window(driver.window_handles[1])
-                        time.sleep(3) # Aguarda renderizar perfeitamente no centro
+                        # Injeta uma tela branca com a imagem por cima de tudo
+                        driver.execute_script(f"""
+                            var div = document.createElement('div');
+                            div.id = 'overlay-captura-magica';
+                            div.style.position = 'fixed';
+                            div.style.top = '0';
+                            div.style.left = '0';
+                            div.style.width = '100vw';
+                            div.style.height = '100vh';
+                            div.style.backgroundColor = 'white';
+                            div.style.zIndex = '999999999';
+                            div.style.display = 'flex';
+                            div.style.alignItems = 'center';
+                            div.style.justifyContent = 'center';
+                            var img = document.createElement('img');
+                            img.src = '{url_img}';
+                            img.id = 'imagem-captura-magica';
+                            img.style.maxWidth = '90%';
+                            img.style.maxHeight = '90%';
+                            div.appendChild(img);
+                            document.body.appendChild(div);
+                        """)
+                        time.sleep(3) # Aguarda a imagem carregar no overlay
                         
-                        el_img = driver.find_element(By.TAG_NAME, "img")
+                        el_img = driver.find_element(By.ID, "imagem-captura-magica")
                         filename = f"temp_img_frigelar_{int(time.time())}.png"
-                        caminho_imagem_aba = os.path.join(self.output_folder, filename)
+                        caminho_imagem_injecao = os.path.join(self.output_folder, filename)
                         
-                        el_img.screenshot(caminho_imagem_aba)
+                        el_img.screenshot(caminho_imagem_injecao)
                         
-                        driver.close()
-                        driver.switch_to.window(driver.window_handles[0])
+                        # Remove o overlay para a página voltar ao normal e continuar o código
+                        driver.execute_script("document.getElementById('overlay-captura-magica').remove();")
                         
-                        if os.path.exists(caminho_imagem_aba) and os.path.getsize(caminho_imagem_aba) > 1024:
-                            caminho_imagem = caminho_imagem_aba
-                            print("   ✅ Imagem capturada com sucesso no Bypass da Nova Aba!")
+                        if os.path.exists(caminho_imagem_injecao) and os.path.getsize(caminho_imagem_injecao) > 1024:
+                            caminho_imagem = caminho_imagem_injecao
+                            print("   ✅ Imagem capturada com sucesso via Injeção de Tela!")
                         else:
-                            print("   ⚠️ O Bypass da Nova Aba capturou um ficheiro corrompido.")
+                            print("   ⚠️ O Bypass de Injeção capturou um ficheiro corrompido.")
                 except Exception as e:
-                    print(f"   ⚠️ Falha no Bypass da Nova Aba: {e}")
-                    if len(driver.window_handles) > 1:
-                        driver.close()
-                        driver.switch_to.window(driver.window_handles[0])
+                    print(f"   ⚠️ Falha no Bypass de Injeção: {e}")
 
             # --- 3. DESCRIÇÃO (Limpeza Cirúrgica) ---
             print("   [Frigelar] Extraindo Descrição...")
