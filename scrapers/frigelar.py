@@ -13,7 +13,7 @@ class FrigelarScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Frigelar] Iniciando Scraper (Motor Oracle Cloud Commerce e Busca Direta de Imagem)...")
+            print(f"   [Frigelar] Iniciando Scraper (Motor Oracle com Captura de Tela Inteligente)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -59,11 +59,10 @@ class FrigelarScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- 2. IMAGEM (BUSCA DIRETA NA TAG E LIMPEZA DE PARÂMETROS) ---
+            # --- 2. IMAGEM (TENTATIVA DIRETA DE ALTA RESOLUÇÃO) ---
             print("   [Frigelar] Extraindo Imagem...")
             url_img = None
             
-            # Procura diretamente por uma imagem que tenha o padrão de diretório do OCC (Oracle Cloud Commerce)
             img_tag = soup.find("img", src=re.compile(r'source=/file/'))
             if not img_tag:
                 img_tag = soup.find("img", attrs={"data-src": re.compile(r'source=/file/')})
@@ -71,8 +70,10 @@ class FrigelarScraper(BaseScraper):
             if img_tag:
                 raw_src = img_tag.get("src") or img_tag.get("data-src")
                 if raw_src:
-                    # Corta pelo '&' para remover &height=X&width=Y e forçar a imagem original
-                    clean_src = raw_src.split('&')[0]
+                    # Em vez de cortar os parâmetros da Oracle, substituímos por 1000px
+                    clean_src = re.sub(r'height=\d+', 'height=1000', raw_src)
+                    clean_src = re.sub(r'width=\d+', 'width=1000', clean_src)
+                    
                     if clean_src.startswith("/"):
                         url_img = "https://www.frigelar.com.br" + clean_src
                     else:
@@ -80,23 +81,38 @@ class FrigelarScraper(BaseScraper):
 
             caminho_imagem = None
             if url_img:
-                print(f"   [Frigelar] URL da imagem original encontrada: {url_img}")
+                print(f"   [Frigelar] URL da imagem forçada encontrada: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
-            # PLANO B: Se o download falhar, tira uma fotografia à imagem (Screenshot)
+            # --- PLANO B: SCREENSHOT INTELIGENTE (Filtra imagens com 0 width) ---
             if not caminho_imagem or not os.path.exists(caminho_imagem):
-                print("   [Frigelar] A recorrer ao Screenshot da imagem principal...")
+                print("   [Frigelar] Download bloqueado. A recorrer ao Screenshot da imagem principal...")
                 try:
                     driver.execute_script("window.scrollTo(0, 0);")
-                    # Tenta fotografar a imagem principal
-                    el_img = driver.find_element(By.CSS_SELECTOR, "img[src*='source=/file/']")
+                    time.sleep(1)
+                    
+                    # Recolhe todas as imagens possíveis que o OCC gera
+                    imagens_candidatas = driver.find_elements(By.CSS_SELECTOR, "img[src*='source=/file/'], #cc_img__resize_wrapper img")
+                    
+                    el_img = None
+                    for img in imagens_candidatas:
+                        # O segredo: Só aceita fotografar a imagem se ela estiver visível na tela e tiver tamanho físico!
+                        if img.is_displayed() and img.size['width'] > 50:
+                            el_img = img
+                            break
+                            
                     if el_img:
                         filename = f"temp_img_frigelar_{int(time.time())}.png"
                         caminho_imagem = os.path.join(self.output_folder, filename)
+                        
+                        # Centraliza na tela antes do clique
                         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
                         time.sleep(1)
                         el_img.screenshot(caminho_imagem)
-                        print("   ✅ Imagem salva via screenshot!")
+                        print("   ✅ Imagem salva com sucesso via screenshot!")
+                    else:
+                        print("   ⚠️ Nenhuma imagem visível na tela para fotografar.")
+                        
                 except Exception as e:
                     print(f"   ⚠️ Falha no screenshot: {e}")
 
