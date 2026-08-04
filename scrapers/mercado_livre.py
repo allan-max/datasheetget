@@ -1,14 +1,17 @@
 # scrapers/mercadolivre.py
-import requests
+import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
+import time
 import os
 import re
-import time
+import json
 from .base import BaseScraper
 
 class MercadoLivreScraper(BaseScraper):
     def executar(self):
+        driver = None
         try:
-            print(f"   [Mercado Livre] Iniciando Scraper (Modo API Fantasma - Zero Bloqueios)...")
+            print(f"   [Mercado Livre] Iniciando Scraper (Estratégia Híbrida: Chrome + API do Servidor)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -16,7 +19,6 @@ class MercadoLivreScraper(BaseScraper):
                 os.makedirs(self.output_folder)
 
             # 1. ENGENHARIA REVERSA DO LINK
-            # O link do ML tem sempre um ID do tipo "MLB-12345678". Precisamos extrair esse ID.
             match = re.search(r'MLB[-]?(\d+)', self.url, re.IGNORECASE)
             if not match:
                 print("   ⚠️ Erro: Não foi possível identificar o código do produto (MLB) no link.")
@@ -25,20 +27,38 @@ class MercadoLivreScraper(BaseScraper):
             item_id = f"MLB{match.group(1)}"
             print(f"   [Mercado Livre] ID do Produto Detetado: {item_id}")
 
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            }
-
-            # 2. ACESSO PELA PORTA DOS FUNDOS (API PÚBLICA DO MERCADO LIVRE)
-            # Traz todos os dados do produto num formato estruturado, sem bloqueios de login!
-            url_api = f"https://api.mercadolibre.com/items/{item_id}"
-            resp = requests.get(url_api, headers=headers)
+            # 2. INICIALIZAR CHROME BLINDADO
+            # O Chrome passa pelo Firewall 403 que bloqueou a biblioteca requests
+            options = uc.ChromeOptions()
+            options.page_load_strategy = 'eager'
+            options.add_argument("--no-first-run")
+            options.add_argument("--password-store=basic")
+            options.add_argument(f'--user-agent={self.headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")}')
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--window-size=1920,1080")
             
-            if resp.status_code != 200:
-                print(f"   ⚠️ Erro na API do ML: {resp.status_code}")
-                return {'sucesso': False, 'erro': f'Erro ao contactar o servidor do Mercado Livre: {resp.status_code}'}
+            driver = uc.Chrome(options=options, version_main=109)
+            driver.set_window_size(1920, 1080)
 
-            dados_ml = resp.json()
+            # 3. ACESSAR A API USANDO O NAVEGADOR (Bypass da Tela de Login)
+            url_api = f"https://api.mercadolibre.com/items/{item_id}"
+            print("   [Mercado Livre] Lendo dados da API pelo navegador (1/2)...")
+            driver.get(url_api)
+            time.sleep(1.5) # Aguarda o JSON carregar
+            
+            # O Chrome vai exibir apenas o texto da API na tela. Vamos extrair isso:
+            body = driver.find_element(By.TAG_NAME, "body").text
+            
+            try:
+                dados_ml = json.loads(body)
+            except Exception as e:
+                print("   ⚠️ Erro ao converter JSON da API.")
+                return {'sucesso': False, 'erro': 'Formato inválido retornado pelo ML.'}
+
+            if 'error' in dados_ml:
+                return {'sucesso': False, 'erro': f"Erro reportado pelo ML: {dados_ml.get('message')}"}
 
             # --- TÍTULO ---
             titulo = self.limpar_texto(dados_ml.get('title', 'Produto Mercado Livre'))
@@ -49,25 +69,27 @@ class MercadoLivreScraper(BaseScraper):
             caminho_imagem = None
             fotos = dados_ml.get('pictures', [])
             if fotos:
-                # O ML entrega a "secure_url" que é a imagem original sem cortes
                 url_img = fotos[0].get('secure_url') or fotos[0].get('url')
                 if url_img:
-                    print(f"   [Mercado Livre] URL da imagem encontrada: {url_img}")
                     caminho_imagem = self.baixar_imagem_temp(url_img)
 
             # --- DESCRIÇÃO ---
-            print("   [Mercado Livre] A puxar Descrição do Servidor...")
+            print("   [Mercado Livre] Lendo descrição da API (2/2)...")
             descricao = "Descrição indisponível."
             url_desc = f"https://api.mercadolibre.com/items/{item_id}/description"
-            resp_desc = requests.get(url_desc, headers=headers)
+            driver.get(url_desc)
+            time.sleep(1.5)
             
-            if resp_desc.status_code == 200:
-                dados_desc = resp_desc.json()
+            body_desc = driver.find_element(By.TAG_NAME, "body").text
+            try:
+                dados_desc = json.loads(body_desc)
                 descricao_bruta = dados_desc.get('plain_text', '')
                 descricao = self.limpar_descricao_ml(descricao_bruta)
                 print("   ✅ Descrição formatada.")
+            except:
+                print("   ⚠️ Aviso: Não foi possível obter a descrição.")
 
-            # --- FICHA TÉCNICA (Especificações limpas direto do banco de dados) ---
+            # --- FICHA TÉCNICA ---
             print("   [Mercado Livre] A compilar Ficha Técnica...")
             specs = {}
             atributos = dados_ml.get('attributes', [])
@@ -117,6 +139,10 @@ class MercadoLivreScraper(BaseScraper):
         except Exception as e:
             print(f"   ❌ [ERRO MERCADO LIVRE] {e}")
             return {'sucesso': False, 'erro': str(e)}
+        finally:
+            if driver:
+                try: driver.quit()
+                except: pass
 
     def limpar_descricao_ml(self, texto_bruto):
         if not texto_bruto: return "Descrição indisponível."
