@@ -212,7 +212,7 @@ SITES_CONFIG = {
     'MARTINS': {
         'padroes_url': [r'martinsatacado\.com\.br'],
         'modulo': 'martins',
-        'classe': 'MartinsScraper'
+        'classe': 'MartinsAtacadoScraper'
     },
     'KALUNGA': {
         'padroes_url': [r'kalunga\.com\.br'],
