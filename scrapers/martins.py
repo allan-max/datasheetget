@@ -13,14 +13,13 @@ class MartinsScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Martins Atacado] Iniciando Scraper V2 (Ataque ao Material-UI e Og:Image)...")
+            print(f"   [Martins Atacado] Iniciando Scraper (Caçador JS e Clicker HTML cru)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
             if not os.path.exists(self.output_folder): 
                 os.makedirs(self.output_folder)
 
-            # --- Configuração Selenium Blindado ---
             options = uc.ChromeOptions()
             options.page_load_strategy = 'eager'
             options.add_argument("--no-first-run")
@@ -37,23 +36,21 @@ class MartinsScraper(BaseScraper):
             driver.get(self.url)
 
             # 1. Espera a página processar os scripts do React (Pausa humana)
-            print("   [Martins Atacado] Aguardando a montagem do site...")
             time.sleep(4) 
             driver.execute_script("window.scrollBy(0, 500);")
             time.sleep(1)
             
-            # --- O SEGREDO DO CLIQUE (IGNORA COMENTÁRIOS E ESPAÇOS OCULTOS) ---
+            # --- O SEGREDO DO CLIQUE: LEITURA DE HTML CRU (Ignora o <!-- -->) ---
             print("   [Martins Atacado] Forçando clique no botão 'Ver Mais'...")
             driver.execute_script("""
-                var els = document.querySelectorAll('a, button, span, p, div');
-                els.forEach(function(el) {
-                    var text = el.textContent || el.innerText || '';
-                    // Limpeza bruta: remove TUDO que for espaço ou quebra de linha
-                    var textLimpo = text.replace(/\\s+/g, '').toLowerCase();
-                    if (textLimpo.includes('vermais') || textLimpo.includes('especificações')) {
-                        try { el.click(); } catch(e) {}
+                var els = document.querySelectorAll('a, button, span, div');
+                for (var i = 0; i < els.length; i++) {
+                    var htmlInterno = els[i].innerHTML || '';
+                    // Se o HTML cru tiver "Ver" e "Mais", independentemente de comentários no meio, ele clica
+                    if (htmlInterno.includes('Ver') && htmlInterno.includes('Mais')) {
+                        try { els[i].click(); } catch(e) {}
                     }
-                });
+                }
             """)
             
             # Aguarda a animação do painel (Collapse) revelar as especificações
@@ -61,49 +58,51 @@ class MartinsScraper(BaseScraper):
             driver.execute_script("window.scrollBy(0, 500);")
             time.sleep(1)
 
+            # --- CAPTURA DA IMAGEM: O CAÇADOR DE ALTA RESOLUÇÃO ---
+            print("   [Martins Atacado] Procurando a imagem de maior resolução...")
+            url_img = driver.execute_script("""
+                var imgs = document.getElementsByTagName('img');
+                var bestImg = '';
+                var maxArea = 0;
+                for(var i = 0; i < imgs.length; i++) {
+                    // Calcula os pixeis reais da imagem (ignora o tamanho no ecrã)
+                    var area = imgs[i].naturalWidth * imgs[i].naturalHeight;
+                    var src = imgs[i].src || '';
+                    
+                    // Foge de logotipos, ícones e SVGs
+                    if(area > maxArea && src && !src.includes('logo') && !src.includes('icon') && !src.includes('svg')) {
+                        maxArea = area;
+                        bestImg = src;
+                    }
+                }
+                return bestImg;
+            """)
+
+            caminho_imagem = None
+            if url_img:
+                print(f"   [Martins Atacado] URL da Imagem GIGANTE encontrada: {url_img}")
+                caminho_imagem = self.baixar_imagem_temp(url_img)
+            else:
+                print("   ⚠️ Nenhuma imagem de alta resolução retornada pelo JS.")
+
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-            # --- 1. TÍTULO ---
+            # --- TÍTULO ---
             titulo = "Produto Martins Atacado"
             h1 = soup.find('h1')
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- 2. IMAGEM (OG:IMAGE É A SALVAÇÃO) ---
-            print("   [Martins Atacado] Capturando Imagem Principal (À prova de falhas)...")
-            url_img = None
-            caminho_imagem = None
-            
-            # Procura pela imagem oficial definida pelo Martins Atacado no cabeçalho oculto da página
-            meta_img = soup.find("meta", property="og:image")
-            if meta_img and meta_img.get("content"):
-                url_img = meta_img.get("content")
-            
-            # Se a meta tag falhar, tenta procurar a imagem grande dentro do site
-            if not url_img:
-                imagens = soup.find_all('img')
-                for img in imagens:
-                    src = img.get('src') or ''
-                    # Ignora logotipos, ícones de menu, etc.
-                    if 'produto' in src.lower() or 'arquivos' in src.lower() or 'catalog' in src.lower():
-                        if 'logo' not in src.lower() and 'icon' not in src.lower():
-                            url_img = src
-                            break
-
-            if url_img:
-                print(f"   [Martins Atacado] URL da Imagem Correta: {url_img}")
-                caminho_imagem = self.baixar_imagem_temp(url_img)
-
-            # --- 3. DESCRIÇÃO E FICHA TÉCNICA (EXTRAÇÃO EXATA DO BLOCO MUI) ---
+            # --- DESCRIÇÃO E FICHA TÉCNICA (EXTRAÇÃO DO BLOCO MUI) ---
             print("   [Martins Atacado] Lendo o bloco de Especificações revelado...")
             descricao = "Descrição indisponível."
             specs = {}
             
-            # Procura a div específica que me mostrou no código: MuiCollapse-wrapperInner
+            # Procura a div específica MuiCollapse-wrapperInner
             collapse = soup.find('div', class_=re.compile(r'MuiCollapse-wrapperInner'))
             
             if collapse:
-                # Extrai a Descrição (dentro do H2/P do collapse)
+                # Extrai a Descrição (dentro do H2 ou P)
                 h2 = collapse.find('h2')
                 if h2:
                     for br in h2.find_all("br"): br.replace_with("\n")
@@ -134,8 +133,7 @@ class MartinsScraper(BaseScraper):
             print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
             # --- FINALIZAÇÃO E CORREÇÃO DE PDF ---
-            
-            # Força o caminho absoluto e inverte barras para o gerador de PDF
+            # Força o caminho absoluto e inverte barras para o gerador de PDF ler sem falhas
             if caminho_imagem and os.path.exists(caminho_imagem):
                 caminho_absoluto = os.path.abspath(caminho_imagem)
                 caminho_imagem = caminho_absoluto.replace("\\", "/")
@@ -166,3 +164,25 @@ class MartinsScraper(BaseScraper):
             if driver:
                 try: driver.quit()
                 except: pass
+
+    def limpar_descricao_martins(self, texto_bruto):
+        if not texto_bruto: return "Descrição indisponível."
+        
+        texto_limpo = re.sub(r'\s+', ' ', texto_bruto).strip()
+        frases = re.split(r'(?<=[.!?])\s+', texto_limpo)
+        frases_aprovadas = []
+        
+        termos_proibidos = [
+            "garantia", "meses", "tire suas dúvidas", "compre agora",
+            "atendimento", "boleto", "cartão", "entrega", "frete",
+            "pagamento", "devolução"
+        ]
+        
+        for frase in frases:
+            frase_lower = frase.lower()
+            if len(frase) < 4: continue
+            
+            if not any(termo in frase_lower for termo in termos_proibidos):
+                frases_aprovadas.append(frase.strip())
+                
+        return "\n\n".join(frases_aprovadas)
