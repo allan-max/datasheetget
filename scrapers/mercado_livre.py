@@ -13,7 +13,7 @@ class MercadoLivreScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Mercado Livre] Iniciando Scraper (Tática Googlebot SEO - Imune a Login)...")
+            print(f"   [Mercado Livre] Iniciando Scraper (Tática Googlebot SEO + Imagem Alta Resolução)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -60,8 +60,8 @@ class MercadoLivreScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- 2. IMAGEM ---
-            print("   [Mercado Livre] A extrair Imagem...")
+            # --- 2. IMAGEM (O TRUQUE DA ALTA RESOLUÇÃO) ---
+            print("   [Mercado Livre] A extrair Imagem Gigante...")
             url_img = None
             
             # O ML guarda a imagem de alta resolução (zoom) no data-zoom ou exibe diretamente a imagem da galeria
@@ -71,7 +71,10 @@ class MercadoLivreScraper(BaseScraper):
 
             caminho_imagem = None
             if url_img:
-                print(f"   [Mercado Livre] URL da imagem encontrada: {url_img}")
+                # O SEGREDO: Troca qualquer letra isolada no final do link (ex: -V, -I, -W) para -O (Original/Alta Resolução)
+                url_img = re.sub(r'-[a-zA-Z]\.(jpg|jpeg|png|webp)', r'-O.\1', url_img)
+                
+                print(f"   [Mercado Livre] URL da imagem forçada para Original: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
             # --- 3. DESCRIÇÃO ---
