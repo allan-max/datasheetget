@@ -13,7 +13,7 @@ class FrigelarScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Frigelar] Iniciando Scraper (Bypass de Imagem, Conversão PDF e Limpeza)...")
+            print(f"   [Frigelar] Iniciando Scraper (Bypass, Conversão PDF e Limpeza Agressiva)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -177,17 +177,18 @@ class FrigelarScraper(BaseScraper):
                 
                 try:
                     from PIL import Image
-                    img = Image.open(caminho_absoluto)
-                    
-                    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
-                        fundo_branco = Image.new('RGB', img.size, (255, 255, 255))
-                        fundo_branco.paste(img, (0, 0), img if img.mode == 'RGBA' else None)
-                        img = fundo_branco
-                    else:
-                        img = img.convert('RGB')
+                    # O 'with' garante que a imagem original é fechada imediatamente após a leitura
+                    with Image.open(caminho_absoluto) as img:
+                        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                            fundo_branco = Image.new('RGB', img.size, (255, 255, 255))
+                            fundo_branco.paste(img, (0, 0), img if img.mode == 'RGBA' else None)
+                            img_final = fundo_branco
+                        else:
+                            img_final = img.convert('RGB')
+                            
+                        caminho_jpg = caminho_absoluto.rsplit('.', 1)[0] + '.jpg'
+                        img_final.save(caminho_jpg, 'JPEG', quality=95)
                         
-                    caminho_jpg = caminho_absoluto.rsplit('.', 1)[0] + '.jpg'
-                    img.save(caminho_jpg, 'JPEG', quality=95)
                     caminho_imagem = caminho_jpg.replace("\\", "/")
                     arquivos_temporarios.append(caminho_jpg) # Marca o JPG convertido para exclusão
                     print("   ✅ Imagem convertida para JPEG (PDF Compatível)!")
@@ -209,14 +210,20 @@ class FrigelarScraper(BaseScraper):
             print("   [Frigelar] Gerando arquivos finais (Word/PDF)...")
             arquivos = self.gerar_arquivos_finais(dados)
             
-            # --- O NOVO ROTINEIRO DE LIMPEZA ---
+            # --- O ROTINEIRO DE LIMPEZA AGRESSIVA ---
             print("   [Frigelar] Limpando ficheiros de imagem temporários da pasta...")
+            time.sleep(1) # Dá um fôlego para o gerador de PDF e o Windows largarem o ficheiro
             for arq in set(arquivos_temporarios):
-                try:
-                    if os.path.exists(arq):
-                        os.remove(arq)
-                except Exception as e:
-                    print(f"   ⚠️ Não foi possível apagar a imagem temporária: {arq} - {e}")
+                # Tenta apagar até 3 vezes (caso o Windows esteja a reter o ficheiro momentaneamente)
+                for tentativa in range(3):
+                    try:
+                        if os.path.exists(arq):
+                            os.remove(arq)
+                        break # Se conseguiu apagar, sai do loop de tentativas e passa para o próximo ficheiro
+                    except Exception as e:
+                        time.sleep(1)
+                        if tentativa == 2:
+                            print(f"   ⚠️ Não foi possível apagar a imagem temporária: {arq} - Erro: {e}")
                     
             return {
                 'sucesso': True, 
