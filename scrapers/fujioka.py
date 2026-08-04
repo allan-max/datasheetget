@@ -13,7 +13,7 @@ class FujiokaScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Fujioka] Iniciando Scraper (Bypass de FlixMedia e PDF)...")
+            print(f"   [Fujioka] Iniciando Scraper (Extrator JS Direto para Descrição)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -41,14 +41,14 @@ class FujiokaScraper(BaseScraper):
             except:
                 print("   ⚠️ Aviso: H1 não encontrado rapidamente. Tentando continuar.")
             
-            # --- ROLAGEM PROGRESSIVA (Garante que a VTEX injeta a descrição no HTML) ---
-            print("   [Fujioka] Vasculhando a página...")
+            # --- ROLAGEM PROGRESSIVA ---
+            print("   [Fujioka] Vasculhando a página para acionar carregamentos...")
             for i in range(4):
                 driver.execute_script("window.scrollBy(0, 500);")
                 time.sleep(1)
                 
             driver.execute_script("window.scrollTo(0, 300);")
-            time.sleep(0.5)
+            time.sleep(1)
 
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
@@ -57,48 +57,70 @@ class FujiokaScraper(BaseScraper):
             titulo = self.limpar_texto(title_tag.get_text()) if title_tag else "Fujioka Produto"
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- 2. DESCRIÇÃO (BLINDADA CONTRA FLIXMEDIA) ---
-            print("   [Fujioka] Extraindo Descrição...")
+            # --- 2. DESCRIÇÃO (BLINDADA CONTRA FLIXMEDIA E ANINHAMENTO VTEX) ---
+            print("   [Fujioka] Extraindo Descrição (Ataque Misto: JS + BeautifulSoup)...")
             descricao = "Descrição indisponível."
+            desc_texto = ""
             
-            # Procura pela classe padrão da VTEX ou pela tag itemprop genérica
-            desc_container = soup.find("div", class_="productDescription")
-            if not desc_container:
-                desc_container = soup.find("div", attrs={"itemprop": "description"})
-            
-            if desc_container:
-                # O SEGREDO: Remover os blocos da "FlixMedia" (lixo publicitário injetado) antes de extrair o texto
-                for lixo in desc_container.find_all("div", id=re.compile(r"flix", re.IGNORECASE)):
-                    lixo.extract()
-                for lixo in desc_container.find_all("div", class_=re.compile(r"flix", re.IGNORECASE)):
-                    lixo.extract()
-                    
-                # Remove scripts e estilos ocultos que atrapalham a formatação
-                for script in desc_container.find_all(["script", "style", "iframe"]):
-                    script.extract()
+            # Estratégia 1: Extração cirúrgica via JavaScript 
+            # (Remove FlixMedia e Tabela de Características antes de ler o texto)
+            try:
+                desc_texto = driver.execute_script("""
+                    var container = document.querySelector('.productDescription');
+                    if (!container || container.innerText.trim().length < 10) {
+                        container = document.querySelector('[itemprop="description"]');
+                    }
+                    if (container) {
+                        var clone = container.cloneNode(true);
+                        // Arranca fora o lixo
+                        var lixos = clone.querySelectorAll('#caracteristicas, #flix-inpage, [id*="flix"], script, style');
+                        lixos.forEach(l => l.remove());
+                        return clone.innerText;
+                    }
+                    return '';
+                """)
+            except Exception as e:
+                pass
 
-                for br in desc_container.find_all("br"): 
-                    br.replace_with("\n")
+            # Estratégia 2: Fallback para BeautifulSoup se o JS falhar
+            if not desc_texto or len(desc_texto.strip()) < 10:
+                todas_desc = soup.find_all(class_=re.compile(r'productDescription', re.IGNORECASE))
+                if not todas_desc:
+                    todas_desc = soup.find_all(attrs={"itemprop": "description"})
                 
-                desc_texto = desc_container.get_text(separator="\n", strip=True)
-                
-                if len(desc_texto) > 10:
-                    descricao = self.limpar_lixo_comercial(desc_texto)
-                    print("   ✅ Descrição capturada com sucesso.")
+                for tag in todas_desc:
+                    # Exclui a tabela de specs se estiver presa dentro da descrição
+                    for carac in tag.find_all("div", id=re.compile(r"caracteristicas", re.IGNORECASE)): 
+                        carac.extract()
+                    # Exclui o FlixMedia
+                    for flix in tag.find_all(["div", "span"], id=re.compile(r"flix", re.IGNORECASE)): 
+                        flix.extract()
+                    for script in tag.find_all(["script", "style", "iframe"]): 
+                        script.extract()
+                    
+                    for br in tag.find_all("br"): 
+                        br.replace_with("\n")
+                    
+                    txt = tag.get_text(separator="\n", strip=True)
+                    if len(txt) > 20:
+                        desc_texto += txt + "\n\n"
+
+            if desc_texto and len(desc_texto.strip()) > 10:
+                # Usa a função de limpeza exclusiva para o Fujioka (mais tolerante)
+                descricao = self.limpar_descricao_fujioka(desc_texto)
+                print("   ✅ Descrição capturada com sucesso.")
             else:
-                print("   ⚠️ Aviso: O bloco da descrição não foi renderizado a tempo.")
+                print("   ⚠️ Aviso: Bloco de descrição vazio ou não encontrado.")
 
             # --- 3. IMAGEM ---
             print("   [Fujioka] Extraindo Imagem...")
             url_img = None
             caminho_imagem = None
             
-            # Tenta pegar pela meta tag do Facebook (A mais limpa)
             meta_img = soup.find("meta", property="og:image")
             if meta_img and meta_img.get("content"):
                 url_img = meta_img.get("content")
             
-            # Fallback para o container de imagem
             if not url_img:
                 img_tag = soup.find("div", class_="product-image")
                 if img_tag and img_tag.find("img"):
@@ -107,7 +129,7 @@ class FujiokaScraper(BaseScraper):
                     url_img = soup.find("img", id="image-main").get("src")
 
             if url_img:
-                # O Truque da Qualidade: Força a imagem a baixar na resolução máxima (1000x1000)
+                # Força máxima resolução (1000x1000)
                 url_img = re.sub(r'-\d{2,4}-\d{2,4}', '-1000-1000', url_img)
                 caminho_imagem = self.baixar_imagem_temp(url_img)
                 
@@ -145,7 +167,6 @@ class FujiokaScraper(BaseScraper):
             print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
             # --- FINALIZAÇÃO E CORREÇÃO DE PDF ---
-            # Força o caminho absoluto e inverte barras para o gerador de PDF não se perder
             if caminho_imagem and os.path.exists(caminho_imagem):
                 caminho_absoluto = os.path.abspath(caminho_imagem)
                 caminho_imagem = caminho_absoluto.replace("\\", "/")
@@ -174,3 +195,26 @@ class FujiokaScraper(BaseScraper):
             return {'sucesso': False, 'erro': str(e)}
         finally:
             if driver: driver.quit()
+
+    def limpar_descricao_fujioka(self, texto_bruto):
+        """Limpeza exclusiva e mais suave, para não apagar a descrição real da TV"""
+        if not texto_bruto: return "Descrição indisponível."
+        
+        texto_limpo = re.sub(r'\s+', ' ', texto_bruto).strip()
+        frases = re.split(r'(?<=[.!?])\s+', texto_limpo)
+        frases_aprovadas = []
+        
+        termos_proibidos = [
+            "garantia", "meses", "tire suas dúvidas", "compre agora",
+            "atendimento", "boleto", "cartão", "entrega", "frete",
+            "pagamento", "devolução grátis"
+        ]
+        
+        for frase in frases:
+            frase_lower = frase.lower()
+            if len(frase) < 4: continue
+            
+            if not any(termo in frase_lower for termo in termos_proibidos):
+                frases_aprovadas.append(frase.strip())
+                
+        return "\n\n".join(frases_aprovadas)
