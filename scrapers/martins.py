@@ -13,7 +13,7 @@ class MartinsScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Martins Atacado] Iniciando Scraper (Ver Mais Dinâmico e Imagem Responsiva)...")
+            print(f"   [Martins Atacado] Iniciando Scraper (Leitura Direta sem Clique)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -36,27 +36,11 @@ class MartinsScraper(BaseScraper):
             print(f"   [Martins Atacado] Acessando: {self.url}")
             driver.get(self.url)
 
-            # 1. Espera a página processar os scripts
-            time.sleep(4) 
-            driver.execute_script("window.scrollBy(0, 500);")
+            # Scroll duplo suave para garantir que o Lazy Load carrega a tabela e a imagem
+            time.sleep(2) 
+            driver.execute_script("window.scrollTo(0, 700);")
             time.sleep(1)
-            
-            # --- O SEGREDO DO CLIQUE: LEITURA DE HTML CRU ---
-            # Clica no "Ver Mais" apenas para expandir a div MuiCollapse, quer tenha o <!-- --> ou não.
-            print("   [Martins Atacado] Verificando botão 'Ver Mais'...")
-            driver.execute_script("""
-                var els = document.querySelectorAll('a, button, span, div');
-                for (var i = 0; i < els.length; i++) {
-                    var htmlInterno = els[i].innerHTML || '';
-                    if (htmlInterno.includes('Ver') && htmlInterno.includes('Mais')) {
-                        try { els[i].click(); } catch(e) {}
-                    }
-                }
-            """)
-            
-            # Aguarda a animação do painel (Collapse) revelar as especificações
-            time.sleep(2)
-            driver.execute_script("window.scrollBy(0, 500);")
+            driver.execute_script("window.scrollTo(0, 1200);")
             time.sleep(1)
 
             soup = BeautifulSoup(driver.page_source, 'html.parser')
@@ -67,15 +51,12 @@ class MartinsScraper(BaseScraper):
             if h1: titulo = self.limpar_texto(h1.get_text())
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- 2. IMAGEM (Usando o padrão exato da loja) ---
+            # --- 2. IMAGEM (Padrão catalogoimg / responsive) ---
             print("   [Martins Atacado] Extraindo Imagem...")
             url_img = None
             
-            # Tenta pegar pela pasta padronizada de imagens do catálogo deles
             img_tag = soup.find('img', src=re.compile(r'catalogoimg'))
-            
             if not img_tag:
-                # Alternativa: O padrão data-nimg="responsive"
                 img_tag = soup.find('img', attrs={"data-nimg": "responsive"})
 
             if img_tag:
@@ -90,49 +71,51 @@ class MartinsScraper(BaseScraper):
                 print(f"   [Martins Atacado] URL da Imagem encontrada: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
             else:
-                print("   ⚠️ Nenhuma imagem principal identificada nas tags.")
+                print("   ⚠️ Nenhuma imagem principal identificada.")
 
-            # --- 3. DESCRIÇÃO E FICHA TÉCNICA (EXTRAÇÃO DO BLOCO MUI) ---
-            print("   [Martins Atacado] Lendo o bloco de Especificações revelado...")
+            # --- 3. DESCRIÇÃO (Busca direta no H2 > P) ---
+            print("   [Martins Atacado] Extraindo Descrição (H2 -> P)...")
             descricao = "Descrição indisponível."
-            specs = {}
             
-            # Procura a div específica MuiCollapse-wrapperInner
-            collapse = soup.find('div', class_=re.compile(r'MuiCollapse-wrapperInner'))
-            
-            if collapse:
-                # Extrai a Descrição (dentro do H2)
-                h2 = collapse.find('h2')
-                if h2:
+            # Procura todas as tags h2 e verifica qual delas tem um parágrafo <p> dentro
+            h2_tags = soup.find_all('h2')
+            for h2 in h2_tags:
+                p_tag = h2.find('p')
+                if p_tag:
                     for br in h2.find_all("br"): br.replace_with("\n")
-                    descricao = self.limpar_texto(h2.get_text(separator="\n"))
-                
-                # Extrai a Ficha Técnica (Tabela dentro do collapse)
-                tabela = collapse.find('table')
-                if tabela:
-                    linhas = tabela.find_all('tr')
-                    for linha in linhas:
-                        tds = linha.find_all(['th', 'td'])
-                        if len(tds) >= 2:
-                            chave = self.limpar_texto(tds[0].get_text())
-                            valor = self.limpar_texto(tds[1].get_text())
+                    texto_desc = h2.get_text(separator="\n").strip()
+                    if len(texto_desc) > 20: # Ignora se for apenas um título curto
+                        descricao = self.limpar_descricao_martins(texto_desc)
+                        break
+
+            # --- 4. FICHA TÉCNICA (Busca direta na Tabela MUI) ---
+            print("   [Martins Atacado] Extraindo Ficha Técnica (MuiTable)...")
+            specs = {}
+            tabelas = soup.find_all('table', class_=re.compile(r'MuiTable-root'))
+            
+            for tabela in tabelas:
+                linhas = tabela.find_all('tr')
+                for linha in linhas:
+                    # Captura as células (tanto faz se for TH ou TD)
+                    tds = linha.find_all(['th', 'td'])
+                    if len(tds) >= 2:
+                        chave = self.limpar_texto(tds[0].get_text())
+                        valor = self.limpar_texto(tds[1].get_text())
+                        
+                        ignorar = False
+                        termos_proibidos = ["garantia", "código", "sku", "ean", "gtin", "estoque"]
+                        if any(t in chave.lower() for t in termos_proibidos):
+                            ignorar = True
                             
-                            ignorar = False
-                            termos_proibidos = ["garantia", "código", "sku", "ean", "gtin", "estoque"]
-                            if any(t in chave.lower() for t in termos_proibidos):
-                                ignorar = True
-                                
-                            if not ignorar and chave and valor:
-                                specs[chave] = valor
-            else:
-                print("   ⚠️ Aviso: Bloco MuiCollapse-wrapperInner não encontrado (o clique pode não ter funcionado ou a página não tem especificações extra).")
+                        if not ignorar and chave and valor:
+                            specs[chave] = valor
 
             if hasattr(self, 'filtrar_specs'):
                 specs = self.filtrar_specs(specs)
             print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
             # --- FINALIZAÇÃO E CORREÇÃO DE PDF ---
-            # Força o caminho absoluto e inverte barras para o gerador de PDF ler sem falhas
+            # Força o caminho absoluto e inverte barras para o gerador de PDF não se perder
             if caminho_imagem and os.path.exists(caminho_imagem):
                 caminho_absoluto = os.path.abspath(caminho_imagem)
                 caminho_imagem = caminho_absoluto.replace("\\", "/")
