@@ -13,7 +13,7 @@ class FujiokaScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Fujioka] Iniciando Scraper (Motor Javascript Ativado)...")
+            print(f"   [Fujioka] Iniciando Scraper (Bypass de FlixMedia e PDF)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -57,14 +57,30 @@ class FujiokaScraper(BaseScraper):
             titulo = self.limpar_texto(title_tag.get_text()) if title_tag else "Fujioka Produto"
             print(f"   ✅ Título capturado: {titulo}")
 
-            # --- 2. DESCRIÇÃO ---
+            # --- 2. DESCRIÇÃO (BLINDADA CONTRA FLIXMEDIA) ---
             print("   [Fujioka] Extraindo Descrição...")
             descricao = "Descrição indisponível."
             
-            desc_tag = soup.find("div", class_=re.compile(r"productDescription"))
-            if desc_tag:
-                for br in desc_tag.find_all("br"): br.replace_with("\n")
-                desc_texto = desc_tag.get_text(separator="\n", strip=True)
+            # Procura pela classe padrão da VTEX ou pela tag itemprop genérica
+            desc_container = soup.find("div", class_="productDescription")
+            if not desc_container:
+                desc_container = soup.find("div", attrs={"itemprop": "description"})
+            
+            if desc_container:
+                # O SEGREDO: Remover os blocos da "FlixMedia" (lixo publicitário injetado) antes de extrair o texto
+                for lixo in desc_container.find_all("div", id=re.compile(r"flix", re.IGNORECASE)):
+                    lixo.extract()
+                for lixo in desc_container.find_all("div", class_=re.compile(r"flix", re.IGNORECASE)):
+                    lixo.extract()
+                    
+                # Remove scripts e estilos ocultos que atrapalham a formatação
+                for script in desc_container.find_all(["script", "style", "iframe"]):
+                    script.extract()
+
+                for br in desc_container.find_all("br"): 
+                    br.replace_with("\n")
+                
+                desc_texto = desc_container.get_text(separator="\n", strip=True)
                 
                 if len(desc_texto) > 10:
                     descricao = self.limpar_lixo_comercial(desc_texto)
@@ -128,7 +144,12 @@ class FujiokaScraper(BaseScraper):
                 specs = self.filtrar_specs(specs)
             print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
-            # --- FINALIZAÇÃO ---
+            # --- FINALIZAÇÃO E CORREÇÃO DE PDF ---
+            # Força o caminho absoluto e inverte barras para o gerador de PDF não se perder
+            if caminho_imagem and os.path.exists(caminho_imagem):
+                caminho_absoluto = os.path.abspath(caminho_imagem)
+                caminho_imagem = caminho_absoluto.replace("\\", "/")
+
             dados = {
                 "titulo": titulo,
                 "descricao": descricao,
