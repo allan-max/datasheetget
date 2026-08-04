@@ -13,7 +13,7 @@ class FrigelarScraper(BaseScraper):
     def executar(self):
         driver = None
         try:
-            print(f"   [Frigelar] Iniciando Scraper (Bypass de Imagem por Injeção HTML + Correção PDF)...")
+            print(f"   [Frigelar] Iniciando Scraper (Bypass de Imagem e Conversão Anti-Falha PDF)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
@@ -94,7 +94,6 @@ class FrigelarScraper(BaseScraper):
                 print("   [Frigelar] Download bloqueado. Iniciando Bypass de Injeção de Tela...")
                 try:
                     if url_img:
-                        # Injeta uma tela branca com a imagem por cima de tudo
                         driver.execute_script(f"""
                             var div = document.createElement('div');
                             div.id = 'overlay-captura-magica';
@@ -116,26 +115,22 @@ class FrigelarScraper(BaseScraper):
                             div.appendChild(img);
                             document.body.appendChild(div);
                         """)
-                        time.sleep(3) # Aguarda a imagem carregar no overlay
+                        time.sleep(3) 
                         
                         el_img = driver.find_element(By.ID, "imagem-captura-magica")
                         filename = f"temp_img_frigelar_{int(time.time())}.png"
                         caminho_imagem_injecao = os.path.join(self.output_folder, filename)
                         
                         el_img.screenshot(caminho_imagem_injecao)
-                        
-                        # Remove o overlay para a página voltar ao normal e continuar o código
                         driver.execute_script("document.getElementById('overlay-captura-magica').remove();")
                         
                         if os.path.exists(caminho_imagem_injecao) and os.path.getsize(caminho_imagem_injecao) > 1024:
                             caminho_imagem = caminho_imagem_injecao
                             print("   ✅ Imagem capturada com sucesso via Injeção de Tela!")
-                        else:
-                            print("   ⚠️ O Bypass de Injeção capturou um ficheiro corrompido.")
                 except Exception as e:
                     print(f"   ⚠️ Falha no Bypass de Injeção: {e}")
 
-            # --- 3. DESCRIÇÃO (Limpeza Cirúrgica) ---
+            # --- 3. DESCRIÇÃO ---
             print("   [Frigelar] Extraindo Descrição...")
             descricao_bruta = ""
             desc_container = soup.find("div", class_="frigelar-product-description-section")
@@ -173,15 +168,35 @@ class FrigelarScraper(BaseScraper):
             if hasattr(self, 'filtrar_specs'): specs = self.filtrar_specs(specs)
             print(f"   ✅ Specs encontradas: {len(specs)} itens.")
 
-            # --- FINALIZAÇÃO ---
-            
-            # TRUQUE PARA O PDF: Forçar o caminho absoluto e inverter as barras para o padrão Web/PDF
+            # --- FINALIZAÇÃO E LAVANDARIA DE IMAGEM ---
             if caminho_imagem and os.path.exists(caminho_imagem):
                 caminho_absoluto = os.path.abspath(caminho_imagem)
-                caminho_imagem = caminho_absoluto.replace("\\", "/")
                 
-                # Se mesmo assim o seu gerador (ex: pdfkit) falhar, remova o '#' da linha abaixo:
-                # caminho_imagem = f"file:///{caminho_imagem}"
+                # NOVO: O Conversor Universal para JPEG (Garante que o PDF nunca falha)
+                try:
+                    from PIL import Image
+                    img = Image.open(caminho_absoluto)
+                    
+                    # Se for PNG com canal Alpha, converte pintando um fundo branco
+                    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                        fundo_branco = Image.new('RGB', img.size, (255, 255, 255))
+                        fundo_branco.paste(img, (0, 0), img if img.mode == 'RGBA' else None)
+                        img = fundo_branco
+                    else:
+                        img = img.convert('RGB')
+                        
+                    # Salva um novo ficheiro garantido em JPEG
+                    caminho_jpg = caminho_absoluto.rsplit('.', 1)[0] + '.jpg'
+                    img.save(caminho_jpg, 'JPEG', quality=95)
+                    caminho_imagem = caminho_jpg.replace("\\", "/")
+                    print("   ✅ Imagem convertida para JPEG (PDF Compatível)!")
+                    
+                except ImportError:
+                    print("   ⚠️ Biblioteca 'Pillow' não instalada. Tentando prosseguir sem conversão...")
+                    caminho_imagem = caminho_absoluto.replace("\\", "/")
+                except Exception as e:
+                    print(f"   ⚠️ Erro menor ao processar imagem para PDF: {e}")
+                    caminho_imagem = caminho_absoluto.replace("\\", "/")
 
             dados = {
                 "titulo": titulo,
@@ -189,9 +204,6 @@ class FrigelarScraper(BaseScraper):
                 "caracteristicas": specs,
                 "caminho_imagem_temp": caminho_imagem
             }
-            
-            print("   [Frigelar] Aguardando 2 segundos para o sistema operativo libertar o ficheiro de imagem...")
-            time.sleep(2) # <--- O SEU TIME.SLEEP AQUI
             
             print("   [Frigelar] Gerando arquivos finais...")
             arquivos = self.gerar_arquivos_finais(dados)
