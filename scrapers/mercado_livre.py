@@ -20,25 +20,43 @@ class MercadoLivreScraper(BaseScraper):
             if not os.path.exists(self.output_folder): 
                 os.makedirs(self.output_folder)
 
+            # --- Configuração Selenium de Camuflagem Máxima (Anti-Bot Mercado Livre) ---
             options = uc.ChromeOptions()
-            options.page_load_strategy = 'eager'
-            options.add_argument("--no-first-run")
-            options.add_argument("--password-store=basic")
-            options.add_argument("--disable-http2")
+            options.page_load_strategy = 'normal' # No ML, o 'eager' dispara alarmes de bot
             
-            options.add_argument(f'--user-agent={self.headers.get("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")}')
+            # Remove a flag que grita "Sou um robô!"
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            
+            # Máscaras adicionais
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-popup-blocking")
+            options.add_argument("--profile-directory=Default")
+            options.add_argument("--disable-plugins-discovery")
+            options.add_argument("--incognito") # Navegação anónima ajuda a não sujar a sessão
+            
+            # User-Agent rigorosamente comum
+            options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
             
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-gpu")
             options.add_argument("--window-size=1920,1080")
             
+            # Inicializa o motor
             driver = uc.Chrome(options=options, version_main=109)
             driver.set_window_size(1920, 1080)
             
-            print(f"   [ML] Acessando: {self.url}")
-            driver.set_page_load_timeout(30)
+            # --- Truque de Comportamento Humano ---
+            print(f"   [Mercado Livre] Acessando: {self.url}")
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
             driver.get(self.url)
+            time.sleep(3) # Pausa dramática humana antes de tentar ler qualquer coisa
+            
+            # Rolagem humana simulada para enganar o sistema
+            driver.execute_script("window.scrollBy(0, 300);")
+            time.sleep(1)
+            driver.execute_script("window.scrollBy(0, 500);")
+            time.sleep(1.5)
             
             # --- VERIFICAÇÃO DE CAPTCHA INTERATIVA ---
             time.sleep(3) 
