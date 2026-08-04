@@ -190,6 +190,9 @@ class FrigelarScraper(BaseScraper):
                 "caminho_imagem_temp": caminho_imagem
             }
             
+            print("   [Frigelar] Aguardando 2 segundos para o sistema operativo libertar o ficheiro de imagem...")
+            time.sleep(2) # <--- O SEU TIME.SLEEP AQUI
+            
             print("   [Frigelar] Gerando arquivos finais...")
             arquivos = self.gerar_arquivos_finais(dados)
             return {
