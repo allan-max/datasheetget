@@ -99,10 +99,50 @@ class BaseScraper:
     def gerar_arquivos_finais(self, dados):
         if not self.output_folder: raise Exception("Pasta de saída indefinida")
 
+        # 1. Procurar e extrair o modelo
+        modelo_encontrado = None
+        
+        # A) Procurar nas características (specs)
+        specs = dados.get('caracteristicas', {})
+        if isinstance(specs, dict):
+            for k, v in specs.items():
+                if str(k).strip().lower() == 'modelo':
+                    modelo_encontrado = str(v).strip()
+                    break
+        elif isinstance(specs, list):
+            for item in specs:
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    if str(item[0]).strip().lower() == 'modelo':
+                        modelo_encontrado = str(item[1]).strip()
+                        break
+                        
+        # B) Se não achou nas specs, procurar na descrição
+        if not modelo_encontrado:
+            descricao = dados.get('descricao', '')
+            if descricao:
+                match = re.search(r'(?i)modelo\s*[:\-]+\s*([A-Za-z0-9\-\/]+)', str(descricao))
+                if match:
+                    modelo_encontrado = match.group(1).strip()
+                    
+        # 2. Atualizar o título com o modelo
         if 'titulo' in dados and dados['titulo']:
+            if modelo_encontrado:
+                if modelo_encontrado.upper() not in str(dados['titulo']).upper():
+                    dados['titulo'] = f"{str(dados['titulo']).strip()} {modelo_encontrado.upper()}"
             dados['titulo'] = str(dados['titulo']).upper()
 
-        safe_title = re.sub(r'(?u)[^-\w.]', '', dados['titulo'].replace(' ', '_'))[:60]
+        # 3. Adicionar Garantia Padronizada
+        if 'caracteristicas' not in dados:
+            dados['caracteristicas'] = {}
+            
+        if isinstance(dados['caracteristicas'], dict):
+            dados['caracteristicas']['Garantia'] = '12 MESES'
+        elif isinstance(dados['caracteristicas'], list):
+            # Tentar remover garantia antiga se existir e adicionar nova
+            dados['caracteristicas'] = [item for item in dados['caracteristicas'] if not (isinstance(item, (list, tuple)) and len(item) == 2 and str(item[0]).strip().lower() == 'garantia')]
+            dados['caracteristicas'].append(('Garantia', '12 MESES'))
+
+        safe_title = re.sub(r'(?u)[^-\w.]', '', dados['titulo'].replace(' ', '_'))[:100]
         timestamp = datetime.now().strftime("%H%M%S")
         
         nome_word = f"{safe_title}_{timestamp}.docx"
