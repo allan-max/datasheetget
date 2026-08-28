@@ -2,6 +2,8 @@
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 import time
 import os
@@ -44,10 +46,17 @@ class TambasaScraper(BaseScraper):
             except Exception as e:
                 print(f"   [Tambasa] Erro de rede: {e}")
 
+            try:
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "h1[class*='product-name'], img[class*='product-detail__large-image']"))
+                )
+            except Exception:
+                print("   [Tambasa] Aviso: Tempo de espera pelos elementos principais esgotado.")
+
             # Scroll rápido para renderizar imagens preguiçosas
             try:
                 driver.execute_script("window.scrollTo(0, 600);")
-                time.sleep(1)
+                time.sleep(2)
             except: pass
 
             soup = BeautifulSoup(driver.page_source, 'html.parser')
@@ -83,16 +92,19 @@ class TambasaScraper(BaseScraper):
                 print("   [Tambasa] Apelando para captura de tela da imagem...")
                 try:
                     driver.execute_script("window.scrollTo(0, 0);")
-                    el_img = driver.find_element(By.CSS_SELECTOR, "img.product-detail__large-image")
-                    if el_img:
+                    el_imgs = driver.find_elements(By.CSS_SELECTOR, "img[class*='product-detail__large-image']")
+                    if el_imgs:
+                        el_img = el_imgs[0]
                         filename = f"temp_img_tambasa_{int(time.time())}.png"
                         caminho_imagem = os.path.join(self.output_folder, filename)
                         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
                         time.sleep(1.5)
                         el_img.screenshot(caminho_imagem)
                         print("   ✅ Imagem salva via screenshot!")
+                    else:
+                        print("   ⚠️ Imagem não encontrada no DOM para screenshot.")
                 except Exception as e:
-                    print(f"   ⚠️ Erro ao salvar imagem: {e}")
+                    print(f"   ⚠️ Erro inesperado ao salvar imagem: {type(e).__name__}")
 
            # --- DESCRIÇÃO (COM LIMPEZA PROFUNDA E REMOÇÃO DE FAQ) ---
             descricao = "Descrição indisponível."
