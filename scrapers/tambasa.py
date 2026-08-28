@@ -24,10 +24,13 @@ class TambasaScraper(BaseScraper):
             # --- SETUP (Proteção Server 2012 R2 - V109) ---
             options = uc.ChromeOptions()
             # options.add_argument("--headless=new") 
-            options.page_load_strategy = 'eager'
+            # options.page_load_strategy = 'eager' # Pode causar problemas com undetected_chromedriver
             options.add_argument("--no-first-run")
             options.add_argument("--password-store=basic")
             options.add_argument("--window-size=1920,3000")
+            
+            # Atualiza o User-Agent para uma versão mais recente (ajuda a evitar 429 e bloqueios WAF)
+            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36')
             
             options.add_argument("--no-sandbox") 
             options.add_argument("--disable-dev-shm-usage") 
@@ -37,10 +40,19 @@ class TambasaScraper(BaseScraper):
             
             # 1. ACESSO COM TRATAMENTO DE TIMEOUT
             print(f"   [Tambasa] Acessando: {self.url}")
-            driver.set_page_load_timeout(20)
+            driver.set_page_load_timeout(30)
             
             try:
                 driver.get(self.url)
+                
+                # Tratamento para erro 429 (Too Many Requests)
+                time.sleep(2)
+                if "Too Many Requests" in driver.page_source or "too many requests" in driver.page_source.lower():
+                    print("   [Tambasa] ⚠️ Bloqueio de 'Too Many Requests' detectado. Aguardando 10 segundos e tentando recarregar...")
+                    time.sleep(10)
+                    driver.refresh()
+                    time.sleep(3)
+                    
             except TimeoutException:
                 print("   [Tambasa] Aviso: A página demorou muito, forçando a extração do que já carregou!")
             except Exception as e:
