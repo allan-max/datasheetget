@@ -23,7 +23,7 @@ class TambasaScraper(BaseScraper):
 
             # --- SETUP (Proteção Server 2012 R2 - V109) ---
             options = uc.ChromeOptions()
-            options.add_argument("--headless=new") 
+            # options.add_argument("--headless=new") 
             options.page_load_strategy = 'eager'
             options.add_argument("--no-first-run")
             options.add_argument("--password-store=basic")
