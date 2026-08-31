@@ -31,13 +31,33 @@ class CasasBahiaScraper(BaseScraper):
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
+            # O Akamai identifica o navegador pela assinatura do HTTP/2 (ordem dos
+            # frames e SETTINGS). Forçar HTTP/1.1 elimina essa assinatura — é o
+            # mesmo truque já usado em scrapers/ingram_micro.py.
+            options.add_argument("--disable-http2")
+            # Perfil novo arranca em inglês; um comprador brasileiro manda pt-BR.
+            options.add_argument("--lang=pt-BR")
             options.add_argument("--window-size=1920,1080")
 
             driver = uc.Chrome(options=options, version_main=109)
             driver.set_window_size(1920, 1080)
 
-            print(f"   [Casas Bahia] A aceder a: {self.url}")
             driver.set_page_load_timeout(60)
+
+            # O undetected_chromedriver arranca sempre num perfil vazio. Entrar
+            # direto no link do produto com um navegador sem cookies nem histórico
+            # é o padrão que o Akamai nega de imediato ('customdeny'), sem sequer
+            # dar o desafio. Passar primeiro pela homepage deixa o sensor do Akamai
+            # correr e validar os cookies da sessão (_abck), tal como acontece
+            # quando se abre o site à mão.
+            print("   [Casas Bahia] A aquecer a sessão pela página inicial...")
+            try:
+                driver.get("https://www.casasbahia.com.br/")
+                time.sleep(8)
+            except Exception as e:
+                print(f"   ⚠️ Aviso: não foi possível abrir a página inicial: {e}")
+
+            print(f"   [Casas Bahia] A aceder a: {self.url}")
 
             # O Akamai da Casas Bahia devolve primeiro um interstício de desafio em JS.
             # Num servidor lento / com IP de datacenter esse desafio demora mais e às
@@ -62,7 +82,15 @@ class CasasBahiaScraper(BaseScraper):
                 except:
                     pass
 
-                print(f"   ⚠️ H1 não apareceu. Estado: {self.diagnosticar_bloqueio(driver.page_source)}")
+                estado = self.diagnosticar_bloqueio(driver.page_source)
+                print(f"   ⚠️ H1 não apareceu. Estado: {estado}")
+
+                # Bloqueio de IP não passa a recarregar: cada nova tentativa só
+                # reforça a marcação do Akamai. Desiste já em vez de insistir.
+                if "acesso negado" in estado:
+                    print("   [Casas Bahia] Bloqueio permanente — a desistir sem insistir.")
+                    break
+
                 if tentativa < 3:
                     time.sleep(10)
 
