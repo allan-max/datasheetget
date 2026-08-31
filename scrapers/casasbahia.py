@@ -1,6 +1,7 @@
 # scrapers/casasbahia.py
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
@@ -36,16 +37,37 @@ class CasasBahiaScraper(BaseScraper):
             driver.set_window_size(1920, 1080)
 
             print(f"   [Casas Bahia] A aceder a: {self.url}")
-            driver.set_page_load_timeout(30)
-            driver.get(self.url)
+            driver.set_page_load_timeout(60)
 
-            print("   [Casas Bahia] A aguardar renderização inicial...")
-            try:
-                WebDriverWait(driver, 25).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "h1"))
-                )
-            except:
-                print("   ⚠️ Aviso: H1 não encontrado rapidamente. A forçar a extração.")
+            # O Akamai da Casas Bahia devolve primeiro um interstício de desafio em JS.
+            # Num servidor lento / com IP de datacenter esse desafio demora mais e às
+            # vezes só passa ao recarregar. Mesmo padrão da Tambasa: detetar, esperar
+            # e recarregar, em vez de desistir logo à primeira.
+            pagina_ok = False
+            for tentativa in range(1, 4):
+                try:
+                    driver.get(self.url)
+                except TimeoutException:
+                    print("   [Casas Bahia] Aviso: a página demorou muito. A continuar com o que carregou.")
+                except Exception as e:
+                    print(f"   [Casas Bahia] Erro de rede: {e}")
+
+                print(f"   [Casas Bahia] A aguardar renderização (tentativa {tentativa}/3)...")
+                try:
+                    WebDriverWait(driver, 40).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "h1"))
+                    )
+                    pagina_ok = True
+                    break
+                except:
+                    pass
+
+                print(f"   ⚠️ H1 não apareceu. Estado: {self.diagnosticar_bloqueio(driver.page_source)}")
+                if tentativa < 3:
+                    time.sleep(10)
+
+            if not pagina_ok:
+                self.salvar_html_falha(driver.page_source)
 
             # --- ROLAGEM PROGRESSIVA ---
             print("   [Casas Bahia] A vasculhar a página para contornar o Lazy Load...")
@@ -105,7 +127,7 @@ class CasasBahiaScraper(BaseScraper):
             if h1:
                 titulo = self.limpar_texto(h1.get_text())
             if not titulo:
-                raise Exception("Título não encontrado (a página não renderizou ou o layout mudou)")
+                raise Exception(f"Título não encontrado — {self.diagnosticar_bloqueio(driver.page_source)}")
             print(f"   ✅ Título capturado: {titulo}")
 
             # --- DESCRIÇÃO ---
@@ -240,6 +262,30 @@ class CasasBahiaScraper(BaseScraper):
             if driver:
                 try: driver.quit()
                 except: pass
+
+    def diagnosticar_bloqueio(self, html):
+        """Diz porque é que a página não veio, em vez do genérico 'layout mudou'."""
+        if not html:
+            return "o navegador não devolveu nada (o Chrome não chegou a abrir a página)"
+        if "sec-if-cpt-container" in html or "Powered and protected by" in html:
+            return "parou no desafio anti-bot do Akamai (a verificação não foi ultrapassada)"
+        if "customdeny" in html or "Access Denied" in html:
+            return "acesso negado pelo Akamai (o IP do servidor está bloqueado)"
+        if "Too Many Requests" in html or "429" == html.strip():
+            return "bloqueio por excesso de pedidos (429)"
+        if len(html) < 5000:
+            return f"a página veio praticamente vazia ({len(html)} bytes)"
+        return f"a página carregou ({len(html)} bytes) mas sem H1 — o layout pode ter mudado"
+
+    def salvar_html_falha(self, html):
+        """Guarda o HTML recebido para se poder ver o que o servidor apanhou."""
+        try:
+            caminho = os.path.join(self.output_folder, "falha_casasbahia.html")
+            with open(caminho, "w", encoding="utf-8") as f:
+                f.write(html or "")
+            print(f"   [Casas Bahia] HTML da falha guardado em: {caminho}")
+        except Exception as e:
+            print(f"   ⚠️ Não foi possível guardar o HTML da falha: {e}")
 
     def extrair_specs_modal(self, soup):
         """Ficha técnica completa: <p>Chave</p><span>Valor</span> dentro do modal."""
