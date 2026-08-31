@@ -31,10 +31,9 @@ class CasasBahiaScraper(BaseScraper):
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
-            # O Akamai identifica o navegador pela assinatura do HTTP/2 (ordem dos
-            # frames e SETTINGS). Forçar HTTP/1.1 elimina essa assinatura — é o
-            # mesmo truque já usado em scrapers/ingram_micro.py.
-            options.add_argument("--disable-http2")
+            # NÃO usar --disable-http2 aqui: o Chrome 109 real fala sempre HTTP/2 com
+            # o Akamai. Forçar HTTP/1.1 faz o navegador dizer que é Chrome mas negociar
+            # como outra coisa, e a assinatura HTTP/2 em falta é ela própria um sinal.
             # Perfil novo arranca em inglês; um comprador brasileiro manda pt-BR.
             options.add_argument("--lang=pt-BR")
             options.add_argument("--window-size=1920,1080")
@@ -54,6 +53,9 @@ class CasasBahiaScraper(BaseScraper):
             try:
                 driver.get("https://www.casasbahia.com.br/")
                 time.sleep(8)
+                # Saber se a inicial passou é o que distingue 'sessão recusada logo
+                # à entrada' de 'o sensor do Akamai correu e reprovou o navegador'.
+                print(f"   [Casas Bahia] Estado da página inicial: {self.diagnosticar_bloqueio(driver.page_source)}")
             except Exception as e:
                 print(f"   ⚠️ Aviso: não foi possível abrir a página inicial: {e}")
 
@@ -66,7 +68,14 @@ class CasasBahiaScraper(BaseScraper):
             pagina_ok = False
             for tentativa in range(1, 4):
                 try:
-                    driver.get(self.url)
+                    if tentativa == 1:
+                        # Navegar a partir da própria página envia o Referer da Casas
+                        # Bahia. O driver.get() entra sem Referer nenhum, que é
+                        # precisamente o que um robô faz e uma pessoa não.
+                        driver.execute_script("window.location.href = arguments[0];", self.url)
+                        time.sleep(3)
+                    else:
+                        driver.get(self.url)
                 except TimeoutException:
                     print("   [Casas Bahia] Aviso: a página demorou muito. A continuar com o que carregou.")
                 except Exception as e:
