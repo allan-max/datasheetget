@@ -1,6 +1,7 @@
 # scrapers/bhphotovideo.py
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
@@ -17,11 +18,16 @@ class BhPhotoVideoScraper(BaseScraper):
             print(f"   [B&H] Iniciando Scraper (V29 - No Specs Translation)...")
             
             # --- SETUP ---
-            if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
-            if not os.path.exists(self.pasta_saida): os.makedirs(self.pasta_saida)
+            # O manager define 'output_folder'; 'pasta_saida' não existia e fazia a
+            # imagem ir para uma pasta diferente da do Word/PDF.
+            if not hasattr(self, 'output_folder') or not self.output_folder:
+                self.output_folder = "output"
+            if not os.path.exists(self.output_folder): os.makedirs(self.output_folder)
 
             options = uc.ChromeOptions()
-            options.add_argument("--headless=new") 
+            # NÃO usar --headless: em headless o B&H devolve o interstício anti-bot
+            # ("Um momento…") com 27 KB e sem o produto. Sem headless a página vem
+            # completa (500 KB), já com as tabelas de specs e as features.
             options.add_argument("--window-size=1920,1080")
             options.add_argument("--no-first-run")
             options.add_argument("--no-default-browser-check")
@@ -36,8 +42,11 @@ class BhPhotoVideoScraper(BaseScraper):
             # ETAPA 1: PÁGINA PRINCIPAL
             # =========================================================
             print(f"   [B&H] Acessando Principal: {self.url}")
-            driver.set_page_load_timeout(25)
-            driver.get(self.url)
+            driver.set_page_load_timeout(45)
+            try:
+                driver.get(self.url)
+            except TimeoutException:
+                print("   [B&H] Aviso: a página demorou muito. Extraindo o que já carregou.")
 
             # Tenta fechar popups/cookies se aparecerem
             try:
@@ -53,26 +62,53 @@ class BhPhotoVideoScraper(BaseScraper):
             except: pass
 
             soup_main = BeautifulSoup(driver.page_source, 'html.parser')
-            titulo = "Produto B&H"
+            titulo = None
             h1 = soup_main.find("h1", attrs={"data-selenium": "productTitle"})
             if h1: titulo = self.limpar_texto(h1.get_text())
+
+            # Sem título não há produto nenhum: antes ficava "Produto B&H" e o robô
+            # gerava um PDF vazio a dizer que tinha corrido bem.
+            if not titulo:
+                html = driver.page_source
+                if "Um momento" in html or "captcha" in html.lower():
+                    raise Exception("Bloqueado pelo anti-bot do B&H (página de verificação)")
+                raise Exception(f"Título não encontrado (página com {len(html)} bytes)")
             print(f"   [DEBUG] Título: {titulo}")
 
             # --- IMAGEM ---
             caminho_imagem = None
+
+            # O src vem embrulhado no redimensionador do Cloudflare:
+            # /cdn-cgi/image/fit=scale-down,width=500,.../https://www.bhphotovideo.com/...jpg
+            # O ficheiro real é o que está depois do segundo 'http'.
+            img_tag = soup_main.find("img", attrs={"data-selenium": "inlineMediaMainImage"})
+            if img_tag:
+                url_img = img_tag.get("src") or img_tag.get("data-src")
+                if url_img:
+                    if "/http" in url_img:
+                        url_img = url_img[url_img.index("/http") + 1:]
+                    elif url_img.startswith("//"):
+                        url_img = "https:" + url_img
+                    elif url_img.startswith("/"):
+                        url_img = "https://www.bhphotovideo.com" + url_img
+                    print(f"   [B&H] URL da imagem original: {url_img}")
+                    caminho_imagem = self.baixar_imagem_temp(url_img)
+
             seletores_img = [
                 "img[data-selenium='inlineMediaMainImage']",
                 "div[data-selenium='inlineMedia'] img",
                 "img[class*='mainImage']"
             ]
-            
-            for seletor in seletores_img:
+
+            for seletor in ([] if caminho_imagem else seletores_img):
                 try:
                     els = driver.find_elements(By.CSS_SELECTOR, seletor)
                     for el in els:
                         if el.is_displayed() and el.size['width'] > 50:
-                            filename = "temp_img_bh.png"
-                            caminho_imagem = os.path.join(self.pasta_saida, filename)
+                            # Nome único: a api.py cria uma thread por pedido e um nome
+                            # fixo fazia dois produtos escreverem no mesmo ficheiro.
+                            filename = f"temp_img_bh_{int(time.time())}.png"
+                            caminho_imagem = os.path.join(self.output_folder, filename)
                             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
                             time.sleep(0.3)
                             el.screenshot(caminho_imagem)
@@ -84,40 +120,20 @@ class BhPhotoVideoScraper(BaseScraper):
             # =========================================================
             # ETAPA 2: OVERVIEW
             # =========================================================
-            url_overview = self.url.split("?")[0].rstrip("/") + "/overview"
-            if "/overview" not in driver.current_url:
-                driver.set_page_load_timeout(10)
+            # A página principal já traz as features do Overview (25 blocos no teste).
+            # Só se vier vazia é que compensa navegar para /overview.
+            descricao_en = self.extrair_descricao(soup_main)
+
+            if not descricao_en:
+                print("   [B&H] Overview vazio na principal. Navegando para /overview...")
+                url_overview = self.url.split("?")[0].rstrip("/") + "/overview"
+                driver.set_page_load_timeout(15)
                 try: driver.get(url_overview)
                 except: driver.execute_script("window.stop();")
 
-            driver.execute_script("window.scrollTo(0, 600);")
-            time.sleep(1) 
-
-            soup_ov = BeautifulSoup(driver.page_source, 'html.parser')
-            descricao_en = ""
-            blocos_desc = []
-
-            features = soup_ov.find_all("div", class_=lambda c: c and "feature_" in c)
-            if not features:
-                div_long = soup_ov.find("div", attrs={"data-selenium": "overviewLongDescription"})
-                if div_long: features = [div_long]
-
-            seen_text = set()
-            for feat in features:
-                if len(feat.find_all("div", class_=lambda c: c and "feature_" in c)) > 1: continue
-                header = feat.find("div", class_=lambda c: c and "featureHeader_" in c)
-                body = feat.find("div", class_="js-injected-html")
-                txt_h = header.get_text(strip=True) if header else ""
-                txt_b = body.get_text(separator="\n", strip=True) if body else ""
-                if txt_b and txt_b not in seen_text:
-                    seen_text.add(txt_b)
-                    chunk = f"### {txt_h}\n{txt_b}\n" if txt_h else f"{txt_b}\n"
-                    blocos_desc.append(chunk)
-
-            if blocos_desc: descricao_en = "\n".join(blocos_desc)
-            else:
-                div_d = soup_ov.find("div", class_=lambda c: c and "js-injected-html" in c)
-                if div_d: descricao_en = div_d.get_text(separator="\n\n", strip=True)
+                driver.execute_script("window.scrollTo(0, 600);")
+                time.sleep(1)
+                descricao_en = self.extrair_descricao(BeautifulSoup(driver.page_source, 'html.parser'))
 
             print("   [B&H] Traduzindo descrição...")
             # Apenas a descrição continua sendo traduzida
@@ -205,6 +221,10 @@ class BhPhotoVideoScraper(BaseScraper):
             specs_final = specs
             print(f"   ✅ Specs prontas (sem tradução): {len(specs_final)} itens.")
 
+            # Sem descrição e sem ficha técnica o datasheet sairia vazio: falha explícita
+            if not descricao_pt and not specs_final:
+                raise Exception("Nenhum conteúdo extraído (descrição e ficha técnica vazias)")
+
             # --- FINALIZAÇÃO ---
             dados = {
                 "titulo": titulo,
@@ -234,11 +254,66 @@ class BhPhotoVideoScraper(BaseScraper):
                 try: driver.quit()
                 except: pass
 
+    def extrair_descricao(self, soup):
+        """Junta os blocos de 'feature' do Overview num texto só (em inglês)."""
+        blocos_desc = []
+
+        features = soup.find_all("div", class_=lambda c: c and "feature_" in c)
+        if not features:
+            div_long = soup.find("div", attrs={"data-selenium": "overviewLongDescription"})
+            if div_long: features = [div_long]
+
+        seen_text = set()
+        for feat in features:
+            if len(feat.find_all("div", class_=lambda c: c and "feature_" in c)) > 1: continue
+            header = feat.find("div", class_=lambda c: c and "featureHeader_" in c)
+            body = feat.find("div", class_="js-injected-html")
+            txt_h = header.get_text(strip=True) if header else ""
+            txt_b = body.get_text(separator="\n", strip=True) if body else ""
+            if txt_b and txt_b not in seen_text:
+                seen_text.add(txt_b)
+                chunk = f"### {txt_h}\n{txt_b}\n" if txt_h else f"{txt_b}\n"
+                blocos_desc.append(chunk)
+
+        if blocos_desc: return "\n".join(blocos_desc)
+
+        div_d = soup.find("div", class_=lambda c: c and "js-injected-html" in c)
+        if div_d: return div_d.get_text(separator="\n\n", strip=True)
+        return ""
+
     def traduzir_texto(self, texto, curto=False):
         if not texto or len(texto) < 2: return texto
         try:
-            limit = 4500
-            texto_safe = texto[:limit]
+            limite = 4500
             translator = GoogleTranslator(source='en', target='pt')
-            return translator.translate(texto_safe)
+
+            if len(texto) <= limite:
+                return translator.translate(texto)
+
+            # O tradutor só aceita ~5000 caracteres por pedido. Antes o resto era
+            # cortado com texto[:4500] e perdia-se metade da descrição sem aviso
+            # (a do Sony a7 V tem 8731). Agora traduz por blocos e volta a juntar.
+            partes = []
+            atual = ""
+            for linha in texto.split("\n"):
+                while len(linha) > limite:
+                    if atual:
+                        partes.append(atual)
+                        atual = ""
+                    partes.append(linha[:limite])
+                    linha = linha[limite:]
+                if len(atual) + len(linha) + 1 > limite:
+                    if atual: partes.append(atual)
+                    atual = linha
+                else:
+                    atual = f"{atual}\n{linha}" if atual else linha
+            if atual: partes.append(atual)
+
+            traduzidas = []
+            for parte in partes:
+                try:
+                    traduzidas.append(translator.translate(parte) or parte)
+                except:
+                    traduzidas.append(parte)
+            return "\n".join(traduzidas)
         except: return texto
