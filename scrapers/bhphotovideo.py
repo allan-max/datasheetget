@@ -312,7 +312,34 @@ class BhPhotoVideoScraper(BaseScraper):
         for (n = 0; n < frames.length && censo.length < 8; n++) censo.push(descrever(frames[n], "iframe"));
         for (n = 0; n < caixas.length && censo.length < 8; n++) censo.push(descrever(caixas[n], "caixa"));
 
-        // A caixa manda: é o alvo verdadeiro, tenha o tamanho que tiver.
+        // 1) O caso do B&H: a caixa do Cloudflare está num shadow root FECHADO.
+        // Nem o querySelectorAll entra lá, nem o page_source a mostra — era por
+        // isso que a página parecia vazia mesmo com a caixa à vista na foto. O
+        // que fica no DOM normal é o campo escondido da resposta; o widget é o
+        // vizinho dele, e é o rect desse vizinho que diz onde clicar.
+        var resposta = document.querySelector(
+            "input[name='cf-turnstile-response'], input[id^='cf-chl-widget']");
+        if (resposta) {
+            censo.push(descrever(resposta, "resposta-cf"));
+            var no = resposta.parentElement, moldura = null;
+            while (no && !moldura) {
+                var vizinhos = no.querySelectorAll("*");
+                for (n = 0; n < vizinhos.length; n++) {
+                    var rv = vizinhos[n].getBoundingClientRect();
+                    // A altura é que identifica: a caixa tem ~65px. A largura não
+                    // serve, o hospedeiro do shadow pode esticar-se ao contentor.
+                    if (rv.width >= 100 && rv.height >= 40 && rv.height <= 140) { moldura = rv; break; }
+                }
+                no = no.parentElement;
+            }
+            if (moldura)
+                // 21px da esquerda e a meio na vertical: foi onde deu a medição
+                // na foto do servidor (caixa 299x64, quadrado de x+9 a x+32).
+                return {alvo: {tipo: "cloudflare", x: moldura.left + 21,
+                               y: moldura.top + moldura.height / 2}, censo: censo};
+        }
+
+        // 2) Uma caixa mesmo acessível manda: é o alvo verdadeiro.
         for (n = 0; n < caixas.length; n++) {
             var rc = caixas[n].getBoundingClientRect();
             if (rc.width > 0 && rc.height > 0)
