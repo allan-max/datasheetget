@@ -7,6 +7,26 @@ import time
 from .base import BaseScraper
 
 class TambasaScraper(BaseScraper):
+    def baixar_imagem_temp(self, url_imagem):
+        if not url_imagem or not self.output_folder: return None
+        try:
+            import urllib.request
+            from PIL import Image
+            from io import BytesIO
+            if url_imagem.startswith("//"): url_imagem = "https:" + url_imagem
+            
+            req = urllib.request.Request(url_imagem, headers={'User-Agent': 'Mozilla/5.0'})
+            res = urllib.request.urlopen(req, timeout=10)
+            img_data = res.read()
+            
+            filename = os.path.join(self.output_folder, "temp_img.jpg")
+            img = Image.open(BytesIO(img_data)).convert("RGB")
+            img.save(filename, "JPEG", quality=90)
+            return filename
+        except Exception as e:
+            print(f"   [AVISO] Erro ao baixar imagem: {e}")
+        return None
+
     def executar(self):
         try:
             print(f"   [Tambasa] Iniciando Scraper (Modo Rápido API)...")
@@ -58,6 +78,7 @@ class TambasaScraper(BaseScraper):
 
             if url_img:
                 print(f"   [Tambasa] URL da imagem encontrada: {url_img}")
+                self.headers['User-Agent'] = 'Mozilla/5.0'
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
             # --- DESCRIÇÃO (COM LIMPEZA PROFUNDA E REMOÇÃO DE FAQ) ---
