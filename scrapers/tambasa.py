@@ -1,101 +1,56 @@
 # scrapers/tambasa.py
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+import requests
 from bs4 import BeautifulSoup
-import time
 import os
 import re
+import time
 from .base import BaseScraper
 
 class TambasaScraper(BaseScraper):
     def executar(self):
-        driver = None
         try:
-            print(f"   [Tambasa] Iniciando Scraper...")
+            print(f"   [Tambasa] Iniciando Scraper (Modo Rápido API)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
             if not os.path.exists(self.output_folder): 
                 os.makedirs(self.output_folder)
 
-            # --- SETUP (Proteção Server 2012 R2 - V109) ---
-            options = uc.ChromeOptions()
-            # options.add_argument("--headless=new") 
-            # options.page_load_strategy = 'eager' # Pode causar problemas com undetected_chromedriver
-            options.add_argument("--no-first-run")
-            options.add_argument("--password-store=basic")
-            options.add_argument("--window-size=1920,3000")
-            
-            # Atualiza o User-Agent para uma versão mais recente (ajuda a evitar 429 e bloqueios WAF)
-            # options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36')
-            
-            options.add_argument("--no-sandbox") 
-            options.add_argument("--disable-dev-shm-usage") 
-            options.add_argument("--disable-gpu") 
-            
-            driver = uc.Chrome(options=options, version_main=109)
-            
-            # 1. ACESSO COM TRATAMENTO DE TIMEOUT
             print(f"   [Tambasa] Acessando: {self.url}")
-            driver.set_page_load_timeout(30)
             
-            try:
-                driver.get(self.url)
+            headers = {
+                'User-Agent': 'Mozilla/5.0',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+            }
+            
+            response = requests.get(self.url, headers=headers, timeout=30)
+            
+            if response.status_code == 429:
+                print("   [Tambasa] [AVISO] Bloqueio 429 detectado. Aguardando 15s...")
+                time.sleep(15)
+                response = requests.get(self.url, headers=headers, timeout=30)
                 
-                # Tratamento para erro 429 (Too Many Requests)
-                time.sleep(3)
-                max_retries = 3
-                for attempt in range(max_retries):
-                    page_source_lower = driver.page_source.lower()
-                    if "too many requests" in page_source_lower or "429 error" in page_source_lower or "acesso negado" in page_source_lower:
-                        print(f"   [Tambasa] ⚠️ Bloqueio de 'Too Many Requests' detectado (Tentativa {attempt + 1}/{max_retries}). Aguardando...")
-                        time.sleep(15 * (attempt + 1)) # Espera progressiva: 15s, 30s, 45s
-                        driver.refresh()
-                        time.sleep(5)
-                    else:
-                        break
-                    
-            except TimeoutException:
-                print("   [Tambasa] Aviso: A página demorou muito, forçando a extração do que já carregou!")
-            except Exception as e:
-                print(f"   [Tambasa] Erro de rede: {e}")
+            response.raise_for_status()
 
-            try:
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "h1[class*='product-name'], img[class*='product-detail__large-image']"))
-                )
-            except Exception:
-                print("   [Tambasa] Aviso: Tempo de espera pelos elementos principais esgotado.")
-
-            # Scroll rápido para renderizar imagens preguiçosas
-            try:
-                driver.execute_script("window.scrollTo(0, 600);")
-                time.sleep(2)
-            except: pass
-
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            soup = BeautifulSoup(response.text, 'html.parser')
 
             # --- TÍTULO ---
             titulo = "Produto Tambasa"
             h1 = soup.find("h1", class_=re.compile(r"product-name"))
             if h1:
                 titulo = self.limpar_texto(h1.get_text())
-            print(f"   ✅ Título capturado: {titulo}")
+            print(f"   [OK] Título capturado: {titulo}")
 
-            # --- IMAGEM (PLANO DUPLO COM TRATAMENTO DE URL RELATIVA) ---
+            # --- IMAGEM ---
             print("   [Tambasa] Extraindo Imagem...")
             url_img = None
             caminho_imagem = None
             
             img_tag = soup.find("img", class_=re.compile(r"product-detail__large-image"))
             if img_tag:
-                # Tenta pegar a imagem com zoom (melhor resolução), senão pega o src normal
                 src = img_tag.get("data-zoom-image") or img_tag.get("src")
                 if src:
-                    # Se o link começar com '/', precisamos adicionar o domínio base
                     if src.startswith("/"):
                         url_img = "https://tambasa.com" + src
                     else:
@@ -105,25 +60,7 @@ class TambasaScraper(BaseScraper):
                 print(f"   [Tambasa] URL da imagem encontrada: {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
-            if not caminho_imagem or not os.path.exists(caminho_imagem):
-                print("   [Tambasa] Apelando para captura de tela da imagem...")
-                try:
-                    driver.execute_script("window.scrollTo(0, 0);")
-                    el_imgs = driver.find_elements(By.CSS_SELECTOR, "img[class*='product-detail__large-image']")
-                    if el_imgs:
-                        el_img = el_imgs[0]
-                        filename = f"temp_img_tambasa_{int(time.time())}.png"
-                        caminho_imagem = os.path.join(self.output_folder, filename)
-                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
-                        time.sleep(1.5)
-                        el_img.screenshot(caminho_imagem)
-                        print("   ✅ Imagem salva via screenshot!")
-                    else:
-                        print("   ⚠️ Imagem não encontrada no DOM para screenshot.")
-                except Exception as e:
-                    print(f"   ⚠️ Erro inesperado ao salvar imagem: {type(e).__name__}")
-
-           # --- DESCRIÇÃO (COM LIMPEZA PROFUNDA E REMOÇÃO DE FAQ) ---
+            # --- DESCRIÇÃO (COM LIMPEZA PROFUNDA E REMOÇÃO DE FAQ) ---
             descricao = "Descrição indisponível."
             desc_div = soup.find("div", class_="product-detail__descriptions-text")
             
@@ -132,32 +69,28 @@ class TambasaScraper(BaseScraper):
                 for tag in desc_div(["script", "style", "meta"]):
                     tag.decompose()
                 
-                # 1.5. A GUILHOTINA DO FAQ (Corta tudo do FAQ para a frente)
-                # Procura qualquer título que indique o início das perguntas
+                # 1.5. A GUILHOTINA DO FAQ
                 for header in desc_div.find_all(["h2", "h3", "h4", "strong", "p"]):
                     texto_header = header.get_text().lower()
                     if "perguntas frequentes" in texto_header or "faq" in texto_header:
-                        # Encontrou o início do FAQ. Apaga todos os elementos que vêm a seguir!
                         for irmao in header.find_next_siblings():
                             irmao.decompose()
-                        # Por fim, apaga o próprio título do FAQ
                         header.decompose()
-                        break # Termina a procura, o corte já foi feito
+                        break 
                 
-                # 2. Destruidor de parágrafos comerciais nas partes que sobraram
+                # 2. Destruidor de parágrafos comerciais
                 termos_extras = ["nota fiscal", "faturamento", "condição de pagamento", "faturado", "imposto", "garantia", "boleto", "cartão", "frete"]
                 termos_verificacao = self.termos_proibidos + termos_extras
                 
                 for el in desc_div.find_all(["p", "li", "h2", "h3", "h4", "span", "strong"]):
                     texto_el = el.get_text().lower()
                     if any(termo in texto_el for termo in termos_verificacao):
-                        el.decompose() # Evapora apenas a frase que tem o lixo comercial
+                        el.decompose()
                 
                 # 3. Formata o que sobrou
                 for br in desc_div.find_all("br"):
                     br.replace_with("\n")
                 
-                # Usa \n como separador para não grudar as frases
                 texto_bruto = desc_div.get_text(separator="\n", strip=True)
                 linhas = [line.strip() for line in texto_bruto.split('\n') if len(line.strip()) > 0]
                 texto_limpo = "\n".join(linhas)
@@ -173,7 +106,6 @@ class TambasaScraper(BaseScraper):
                 for attr in atributos:
                     title_span = attr.find("span", class_="product-detail__attribute-title")
                     
-                    # O valor pode estar num span ou numa tag <a> (como a marca)
                     text_span = attr.find("span", class_="product-detail__attribute-text")
                     if not text_span:
                         text_span = attr.find("a", class_=re.compile(r"product-detail__attribute-text"))
@@ -182,7 +114,6 @@ class TambasaScraper(BaseScraper):
                         chave = self.limpar_texto(title_span.get_text())
                         valor = self.limpar_texto(text_span.get_text())
                         
-                        # Passa pelo filtro final contra vendas/garantia
                         ignorar = False
                         for termo in termos_verificacao:
                             if termo in chave.lower() or termo in valor.lower():
@@ -192,7 +123,7 @@ class TambasaScraper(BaseScraper):
                         if not ignorar and chave and valor:
                             specs[chave] = valor
                             
-            print(f"   ✅ Especificações filtradas e capturadas: {len(specs)} itens.")
+            print(f"   [OK] Especificações filtradas e capturadas: {len(specs)} itens.")
 
             # --- FINALIZAÇÃO ---
             dados = {
@@ -217,7 +148,3 @@ class TambasaScraper(BaseScraper):
         except Exception as e:
             print(f"   [ERRO TAMBASA] {e}")
             return {'sucesso': False, 'erro': str(e)}
-        finally:
-            if driver:
-                try: driver.quit()
-                except: pass
