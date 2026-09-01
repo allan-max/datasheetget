@@ -4,10 +4,12 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver import ActionChains
 from bs4 import BeautifulSoup
 import time
 import os
 import json
+import base64
 from deep_translator import GoogleTranslator
 from .base import BaseScraper
 
@@ -48,6 +50,10 @@ class BhPhotoVideoScraper(BaseScraper):
             except TimeoutException:
                 print("   [B&H] Aviso: a página demorou muito. Extraindo o que já carregou.")
 
+            # O Cloudflare mete-se à frente do produto ("Um momento…"). No servidor
+            # era preciso clicar à mão na caixa de verificação; agora clica sozinho.
+            self.resolver_captcha(driver)
+
             # Tenta fechar popups/cookies se aparecerem
             try:
                 WebDriverWait(driver, 5).until(
@@ -70,8 +76,8 @@ class BhPhotoVideoScraper(BaseScraper):
             # gerava um PDF vazio a dizer que tinha corrido bem.
             if not titulo:
                 html = driver.page_source
-                if "Um momento" in html or "captcha" in html.lower():
-                    raise Exception("Bloqueado pelo anti-bot do B&H (página de verificação)")
+                if self.pagina_bloqueada(html):
+                    raise Exception("Bloqueado pela verificação do Cloudflare (a caixa não foi ultrapassada)")
                 raise Exception(f"Título não encontrado (página com {len(html)} bytes)")
             print(f"   [DEBUG] Título: {titulo}")
 
@@ -84,6 +90,10 @@ class BhPhotoVideoScraper(BaseScraper):
             img_tag = soup_main.find("img", attrs={"data-selenium": "inlineMediaMainImage"})
             if img_tag:
                 url_img = img_tag.get("src") or img_tag.get("data-src")
+                # Enquanto não carrega, o src é um pixel em base64: o endereço
+                # verdadeiro fica no data-src.
+                if url_img and url_img.startswith("data:"):
+                    url_img = img_tag.get("data-src") or ""
                 if url_img:
                     if "/http" in url_img:
                         url_img = url_img[url_img.index("/http") + 1:]
@@ -92,7 +102,12 @@ class BhPhotoVideoScraper(BaseScraper):
                     elif url_img.startswith("/"):
                         url_img = "https://www.bhphotovideo.com" + url_img
                     print(f"   [B&H] URL da imagem original: {url_img}")
-                    caminho_imagem = self.baixar_imagem_temp(url_img)
+                    # Pelo navegador primeiro: o requests da base.py não leva os
+                    # cookies do Cloudflare e apanha 403 no servidor — foi por
+                    # isso que o datasheet saiu sem foto.
+                    caminho_imagem = self.baixar_imagem_navegador(driver, url_img)
+                    if not caminho_imagem:
+                        caminho_imagem = self.baixar_imagem_temp(url_img)
 
             seletores_img = [
                 "img[data-selenium='inlineMediaMainImage']",
@@ -116,6 +131,9 @@ class BhPhotoVideoScraper(BaseScraper):
                             break
                     if caminho_imagem: break
                 except: pass
+
+            if not caminho_imagem:
+                print("   ⚠️ Nenhuma imagem obtida — o datasheet vai sair sem foto.")
 
             # =========================================================
             # ETAPA 2: OVERVIEW
@@ -253,6 +271,94 @@ class BhPhotoVideoScraper(BaseScraper):
             if driver:
                 try: driver.quit()
                 except: pass
+
+    def pagina_bloqueada(self, html):
+        """Diz se o que está no ecrã é a verificação do Cloudflare e não o produto.
+        Se o título do produto já lá está, não é bloqueio: o B&H também carrega
+        scripts do Cloudflare em páginas normais."""
+        if not html: return True
+        if 'data-selenium="productTitle"' in html: return False
+        marcas = ["challenges.cloudflare.com", "cf-turnstile", "cf_chl_opt",
+                  "Um momento", "Just a moment", "Verify you are human",
+                  "Verifique se você é humano", "cf-browser-verification"]
+        return any(m in html for m in marcas)
+
+    def resolver_captcha(self, driver, tentativas=3):
+        """Clica na caixa "Verify you are human" do Cloudflare quando ela aparece."""
+        for tentativa in range(1, tentativas + 1):
+            try: html = driver.page_source
+            except: html = ""
+            if not self.pagina_bloqueada(html):
+                return True
+
+            print(f"   [B&H] Verificação do Cloudflare no ecrã ({tentativa}/{tentativas}). A clicar...")
+            clicou = False
+            seletores = ["iframe[src*='challenges.cloudflare.com']",
+                         "iframe[title*='Cloudflare']",
+                         "div.cf-turnstile", "#cf-turnstile", "#challenge-stage"]
+
+            for seletor in seletores:
+                try: elementos = driver.find_elements(By.CSS_SELECTOR, seletor)
+                except: elementos = []
+                for el in elementos:
+                    try:
+                        if not el.is_displayed() or el.size['width'] < 10: continue
+                        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                        time.sleep(0.5)
+                        # A caixa está encostada à esquerda do widget. O Selenium 4
+                        # mede o offset a partir do centro, daí recuar metade da
+                        # largura e avançar ~30 px.
+                        dx = int(-el.size['width'] / 2) + 30
+                        ActionChains(driver).move_to_element_with_offset(el, dx, 0).pause(0.3).click().perform()
+                        clicou = True
+                        break
+                    except Exception as e:
+                        print(f"   [B&H] Não deu para clicar em {seletor}: {e}")
+                if clicou: break
+
+            if not clicou:
+                print("   [B&H] Widget do Cloudflare não encontrado no ecrã.")
+
+            # A verificação demora alguns segundos e a página recarrega sozinha.
+            for _ in range(20):
+                time.sleep(1)
+                try: html = driver.page_source
+                except: continue
+                if not self.pagina_bloqueada(html):
+                    print("   [B&H] Verificação ultrapassada.")
+                    return True
+
+        print("   ⚠️ [B&H] A verificação do Cloudflare não foi ultrapassada.")
+        return False
+
+    def baixar_imagem_navegador(self, driver, url_imagem):
+        """Baixa a imagem com o próprio Chrome, que já tem a sessão validada."""
+        script = """
+            var url = arguments[0], cb = arguments[arguments.length - 1];
+            fetch(url, {credentials: 'include'})
+                .then(function (r) { return r.blob(); })
+                .then(function (b) {
+                    var fr = new FileReader();
+                    fr.onloadend = function () { cb(fr.result); };
+                    fr.readAsDataURL(b);
+                })
+                .catch(function () { cb(null); });
+        """
+        try:
+            driver.set_script_timeout(30)
+            data_url = driver.execute_async_script(script, url_imagem)
+            if not data_url or not data_url.startswith("data:image"):
+                print("   [B&H] O navegador não devolveu uma imagem válida.")
+                return None
+            # Nome único: a api.py cria uma thread por pedido.
+            caminho = os.path.join(self.output_folder, f"temp_img_bh_{int(time.time())}.jpg")
+            with open(caminho, "wb") as f:
+                f.write(base64.b64decode(data_url.split(",", 1)[1]))
+            print(f"   ✅ Imagem baixada pelo navegador ({os.path.getsize(caminho)} bytes).")
+            return caminho
+        except Exception as e:
+            print(f"   [B&H] Download pelo navegador falhou: {e}")
+            return None
 
     def extrair_descricao(self, soup):
         """Junta os blocos de 'feature' do Overview num texto só (em inglês)."""
