@@ -17,8 +17,10 @@ class SamsungScraper(BaseScraper):
             print(f"   [Samsung] Iniciando Scraper (V2 - Correção de Imagem)...")
             
             # --- SETUP (Padronizado para Win Server 2012 R2) ---
-            if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
-            if not os.path.exists(self.pasta_saida): os.makedirs(self.pasta_saida)
+            # A pasta certa é a do pedido (o output_folder da base). O 'pasta_saida'
+            # não existe no BaseScraper e criava uma pasta 'output' à parte.
+            if self.output_folder and not os.path.exists(self.output_folder):
+                os.makedirs(self.output_folder)
 
             options = uc.ChromeOptions()
             options.add_argument("--headless=new") 
@@ -63,6 +65,7 @@ class SamsungScraper(BaseScraper):
             except: pass
 
             soup = BeautifulSoup(driver.page_source, 'html.parser')
+            estado = self.ler_estado_vtex(soup)
 
             # --- TÍTULO ---
             titulo = "Produto Samsung"
@@ -85,18 +88,44 @@ class SamsungScraper(BaseScraper):
                                 break
                     except: pass
                     
+            if titulo == "Produto Samsung":
+                # Sem título não vale a pena continuar: saía um datasheet vazio
+                # chamado "Produto Samsung" e mesmo assim com sucesso=True.
+                raise Exception(f"Título não encontrado (página com {len(driver.page_source)} bytes)")
+
             print(f"   [DEBUG] Título capturado: {titulo}")
 
             # --- IMAGEM (NOVA LÓGICA DE CAPTURA) ---
             url_img = None
-            
+
+            # TENTATIVA 0: a imagem que a página está mesmo a mostrar. O og:image
+            # e o JSON-LD devolvem a cor por omissão do produto e não a do SKU do
+            # link — era por isso que saía o telemóvel da cor errada.
+            try:
+                url_img = driver.execute_script("""
+                    var todas = Array.prototype.slice.call(document.querySelectorAll('img'));
+                    var grandes = todas.filter(function (i) {
+                        return i.naturalWidth > 250 && i.naturalHeight > 250 &&
+                               (i.currentSrc || i.src).indexOf('/arquivos/ids/') > -1;
+                    });
+                    // A principal traz 'productImageTag' na classe; as outras são
+                    // produtos relacionados, mais pequenos.
+                    var principais = grandes.filter(function (i) {
+                        return (i.className || '').indexOf('productImageTag') > -1;
+                    });
+                    var alvo = principais[0] || grandes[0];
+                    return alvo ? (alvo.currentSrc || alvo.src) : null;
+                """)
+            except Exception as e:
+                print(f"   [Samsung] Não deu para ler a imagem da galeria: {e}")
+
             # TENTATIVA 1: Busca diretamente as classes HTML da galeria de produtos
-            img_tags = soup.find_all("img", class_=lambda c: c and (
-                "first-image__main" in c or 
-                "gallery-image" in c or 
+            img_tags = [] if url_img else soup.find_all("img", class_=lambda c: c and (
+                "first-image__main" in c or
+                "gallery-image" in c or
                 "pd-header-gallery__image" in c
             ))
-            
+
             for img in img_tags:
                 # O site da Samsung usa muito o 'srcset'. Pegamos a primeira URL dele.
                 src = img.get("src")
@@ -168,10 +197,20 @@ class SamsungScraper(BaseScraper):
                                 descricao = self.limpar_lixo_comercial(descricao_bruta)
                     except: pass
 
+            # A descrição a sério também está no __STATE__: o JSON-LD desta loja
+            # traz só uma lista de palavras-chave ("Galaxy Z Fold8, Samsung...").
+            bruta_estado = self.descricao_do_estado(estado)
+            if bruta_estado and len(bruta_estado) > len(descricao):
+                descricao = self.limpar_lixo_comercial(bruta_estado)
+
             # --- FICHA TÉCNICA ---
             specs = {}
-            
-            spec_items = soup.find_all(["li", "div"], class_=lambda c: c and "spec" in c.lower() and "item" in c.lower())
+
+            # A ficha técnica está no __STATE__. No HTML visível ela fica fechada
+            # num acordeão que nunca chega ao page_source, e por isso saía vazia.
+            specs = self.specs_do_estado(estado)
+
+            spec_items = [] if specs else soup.find_all(["li", "div"], class_=lambda c: c and "spec" in c.lower() and "item" in c.lower())
             for item in spec_items:
                 nome = item.find(["strong", "span", "p"], class_=lambda c: c and ("name" in c.lower() or "title" in c.lower()))
                 valor = item.find(["span", "p", "div"], class_=lambda c: c and "value" in c.lower())
@@ -229,3 +268,52 @@ class SamsungScraper(BaseScraper):
             if driver:
                 try: driver.quit()
                 except: pass
+
+    def ler_estado_vtex(self, soup):
+        """Lê o JSON que a loja VTEX deixa na página, no template __STATE__.
+        É de lá que saem a ficha técnica e a descrição completa."""
+        tpl = soup.find("template", attrs={"data-varname": "__STATE__"})
+        if not tpl or not tpl.script: return {}
+        try: return json.loads(tpl.script.string)
+        except Exception as e:
+            print(f"   [Samsung] __STATE__ ilegível: {e}")
+            return {}
+
+    def specs_do_estado(self, estado):
+        """Ficha técnica guardada no __STATE__ da VTEX.
+
+        Os grupos 'Review Expert' e 'Lançamento' são material de marketing (logos,
+        citações, folhas de estilo) e ficam de fora. O 'allSpecifications' é só a
+        soma de todos os grupos, por isso serve de reserva. As chaves que não
+        começam por 'Product:' são a matriz de variantes (Cor/Memória de todas as
+        cores do produto), que dava valores errados para o SKU do link."""
+        grupos_fora = ["review expert", "lançamento", "lancamento"]
+        specs, reserva = {}, {}
+        for chave, valor in estado.items():
+            if not chave.startswith("Product:") or ".specifications." not in chave: continue
+            if not isinstance(valor, dict) or not valor.get("name"): continue
+            grupo = ((estado.get(chave.split(".specifications.")[0]) or {}).get("name") or "").strip().lower()
+            if grupo in grupos_fora: continue
+
+            nome = self.limpar_texto(valor.get("name"))
+            # Uns valores vêm em lista, outros dentro de {"type": "json", "json": [...]}.
+            valores = valor.get("values")
+            if isinstance(valores, dict): lista = valores.get("json") or []
+            elif isinstance(valores, list): lista = valores
+            else: lista = []
+            texto = self.limpar_texto(", ".join(str(v) for v in lista))
+
+            if not nome or not texto or len(nome) >= 60: continue
+            if texto.startswith("http") or "<" in texto: continue   # logos e HTML
+            destino = reserva if grupo == "allspecifications" else specs
+            if nome not in destino: destino[nome] = texto
+        return specs or reserva
+
+    def descricao_do_estado(self, estado):
+        """Descrição do produto guardada no __STATE__ (vem em HTML)."""
+        for chave, valor in estado.items():
+            if chave.startswith("Product:") and "." not in chave and isinstance(valor, dict):
+                bruta = valor.get("description") or ""
+                if bruta:
+                    return BeautifulSoup(bruta, "html.parser").get_text("\n", strip=True)
+        return ""
