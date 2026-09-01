@@ -4,7 +4,6 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver import ActionChains
 from bs4 import BeautifulSoup
 import time
 import os
@@ -283,68 +282,69 @@ class BhPhotoVideoScraper(BaseScraper):
                   "Verifique se você é humano", "cf-browser-verification"]
         return any(m in html for m in marcas)
 
-    def elementos_visiveis(self, driver, seletor):
-        try: elementos = driver.find_elements(By.CSS_SELECTOR, seletor)
-        except: return []
-        saida = []
-        for el in elementos:
-            try:
-                if el.is_displayed() and el.size['width'] > 10: saida.append(el)
-            except: pass
-        return saida
+    # O JS devolve o sítio exato da caixa "Confirme que é humano", em pixéis do
+    # ecrã. É preciso ser em JS porque o widget do Cloudflare vive dentro de um
+    # iframe de outro domínio (e às vezes dentro de shadow DOM): o Selenium não
+    # atravessa essa fronteira, e era por isso que o clique não acertava em nada.
+    JS_LOCALIZAR_WIDGET = """
+        function visivel(el) {
+            var r = el.getBoundingClientRect();
+            return r.width > 10 && r.height > 10 && r.top >= 0;
+        }
+        // 1) Caixa desenhada na própria página, mesmo que dentro de shadow DOM.
+        var pilha = [document];
+        while (pilha.length) {
+            var raiz = pilha.pop();
+            if (!raiz.querySelectorAll) continue;
+            var caixas = raiz.querySelectorAll("input[type=checkbox]");
+            for (var i = 0; i < caixas.length; i++) {
+                if (visivel(caixas[i])) {
+                    var rc = caixas[i].getBoundingClientRect();
+                    return {tipo: "caixa", x: rc.left + rc.width / 2, y: rc.top + rc.height / 2};
+                }
+            }
+            var todos = raiz.querySelectorAll("*");
+            for (var j = 0; j < todos.length; j++) {
+                if (todos[j].shadowRoot) pilha.push(todos[j].shadowRoot);
+            }
+        }
+        // 2) Senão, o iframe do desafio: a caixa fica encostada à esquerda.
+        var frames = document.querySelectorAll("iframe");
+        for (var k = 0; k < frames.length; k++) {
+            if (!visivel(frames[k])) continue;
+            var rf = frames[k].getBoundingClientRect();
+            if (rf.width > 600 || rf.height > 200) continue;
+            return {tipo: "iframe", x: rf.left + 28, y: rf.top + rf.height / 2,
+                    src: (frames[k].getAttribute("src") || "").slice(0, 70),
+                    w: rf.width, h: rf.height};
+        }
+        return null;
+    """
 
     def localizar_widget(self, driver):
-        """Encontra a caixa "Confirme que é humano".
+        try: return driver.execute_script(self.JS_LOCALIZAR_WIDGET)
+        except Exception as e:
+            print(f"   [B&H] Falha ao procurar o widget: {e}")
+            return None
 
-        No desafio do B&H o iframe do Turnstile é servido pelo próprio domínio
-        (/cdn-cgi/challenge-platform/...) e o título vem em português, por isso
-        procurar por 'challenges.cloudflare.com' ou 'Cloudflare' não achava nada."""
-        seletores = ["iframe[src*='challenge-platform']",
-                     "iframe[src*='turnstile']",
-                     "iframe[id^='cf-chl-widget']",
-                     "iframe[title*='desafio']",
-                     "iframe[title*='challenge']",
-                     "div.cf-turnstile", "#cf-turnstile"]
-        for seletor in seletores:
-            for el in self.elementos_visiveis(driver, seletor):
-                return el
+    def clicar_em(self, driver, x, y):
+        """Clica nas coordenadas do ecrã com eventos do próprio Chrome (CDP).
 
-        # Último recurso: qualquer iframe com o tamanho de um widget (~300x65).
-        for el in self.elementos_visiveis(driver, "iframe"):
-            try:
-                if 150 <= el.size['width'] <= 500 and 30 <= el.size['height'] <= 150:
-                    return el
-            except: pass
-        return None
-
-    def clicar_widget(self, driver, el):
-        # 1) Por dentro do iframe: a caixa é um <input type="checkbox"> normal.
-        if el.tag_name == "iframe":
-            try:
-                driver.switch_to.frame(el)
-                try:
-                    for caixa in driver.find_elements(By.CSS_SELECTOR, "input[type='checkbox'], label"):
-                        if caixa.is_displayed():
-                            caixa.click()
-                            print("   [B&H] Caixa clicada dentro do iframe.")
-                            return True
-                finally:
-                    driver.switch_to.default_content()
-            except:
-                try: driver.switch_to.default_content()
-                except: pass
-
-        # 2) Por coordenadas: a caixa fica encostada à esquerda do widget e o
-        #    Selenium 4 mede o desvio a partir do centro do elemento.
+        O ActionChains do Selenium calcula a posição a partir do elemento e
+        falha quando o alvo está noutro documento; isto vai direto ao ponto."""
         try:
-            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-            time.sleep(0.5)
-            dx = int(-el.size['width'] / 2) + 25
-            ActionChains(driver).move_to_element_with_offset(el, dx, 0).pause(0.3).click().perform()
-            print(f"   [B&H] Clique por coordenadas no widget (desvio {dx}px).")
+            # Aproximar o rato antes: o Turnstile repara em cliques sem movimento.
+            for dx, dy in ((-70, -45), (-25, -12), (0, 0)):
+                driver.execute_cdp_cmd("Input.dispatchMouseEvent",
+                                       {"type": "mouseMoved", "x": x + dx, "y": y + dy})
+                time.sleep(0.15)
+            botao = {"x": x, "y": y, "button": "left", "clickCount": 1}
+            driver.execute_cdp_cmd("Input.dispatchMouseEvent", dict(botao, type="mousePressed"))
+            time.sleep(0.12)
+            driver.execute_cdp_cmd("Input.dispatchMouseEvent", dict(botao, type="mouseReleased"))
             return True
         except Exception as e:
-            print(f"   [B&H] Clique por coordenadas falhou: {e}")
+            print(f"   [B&H] Clique por CDP falhou: {e}")
             return False
 
     def resolver_captcha(self, driver, tentativas=3):
@@ -358,10 +358,10 @@ class BhPhotoVideoScraper(BaseScraper):
             print(f"   [B&H] Verificação do Cloudflare no ecrã ({tentativa}/{tentativas}). A clicar...")
 
             # O widget é desenhado depois da página, não está lá logo no início.
-            el = None
+            alvo = None
             for _ in range(10):
-                el = self.localizar_widget(driver)
-                if el: break
+                alvo = self.localizar_widget(driver)
+                if alvo: break
                 # Há desafios que passam sozinhos, sem caixa nenhuma: não vale a
                 # pena ficar os 10 segundos à procura de um widget que não existe.
                 try:
@@ -371,8 +371,11 @@ class BhPhotoVideoScraper(BaseScraper):
                 except: pass
                 time.sleep(1)
 
-            if el:
-                self.clicar_widget(driver, el)
+            if alvo:
+                x, y = int(alvo["x"]), int(alvo["y"])
+                print(f"   [B&H] Widget em ({x}, {y}) via {alvo['tipo']} "
+                      f"{alvo.get('src', '')} {alvo.get('w', '')}x{alvo.get('h', '')}")
+                self.clicar_em(driver, x, y)
             else:
                 # Se voltar a falhar, o log diz que iframes existem mesmo na página.
                 print("   [B&H] Widget não encontrado. Iframes presentes:")
