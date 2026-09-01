@@ -283,8 +283,72 @@ class BhPhotoVideoScraper(BaseScraper):
                   "Verifique se você é humano", "cf-browser-verification"]
         return any(m in html for m in marcas)
 
+    def elementos_visiveis(self, driver, seletor):
+        try: elementos = driver.find_elements(By.CSS_SELECTOR, seletor)
+        except: return []
+        saida = []
+        for el in elementos:
+            try:
+                if el.is_displayed() and el.size['width'] > 10: saida.append(el)
+            except: pass
+        return saida
+
+    def localizar_widget(self, driver):
+        """Encontra a caixa "Confirme que é humano".
+
+        No desafio do B&H o iframe do Turnstile é servido pelo próprio domínio
+        (/cdn-cgi/challenge-platform/...) e o título vem em português, por isso
+        procurar por 'challenges.cloudflare.com' ou 'Cloudflare' não achava nada."""
+        seletores = ["iframe[src*='challenge-platform']",
+                     "iframe[src*='turnstile']",
+                     "iframe[id^='cf-chl-widget']",
+                     "iframe[title*='desafio']",
+                     "iframe[title*='challenge']",
+                     "div.cf-turnstile", "#cf-turnstile"]
+        for seletor in seletores:
+            for el in self.elementos_visiveis(driver, seletor):
+                return el
+
+        # Último recurso: qualquer iframe com o tamanho de um widget (~300x65).
+        for el in self.elementos_visiveis(driver, "iframe"):
+            try:
+                if 150 <= el.size['width'] <= 500 and 30 <= el.size['height'] <= 150:
+                    return el
+            except: pass
+        return None
+
+    def clicar_widget(self, driver, el):
+        # 1) Por dentro do iframe: a caixa é um <input type="checkbox"> normal.
+        if el.tag_name == "iframe":
+            try:
+                driver.switch_to.frame(el)
+                try:
+                    for caixa in driver.find_elements(By.CSS_SELECTOR, "input[type='checkbox'], label"):
+                        if caixa.is_displayed():
+                            caixa.click()
+                            print("   [B&H] Caixa clicada dentro do iframe.")
+                            return True
+                finally:
+                    driver.switch_to.default_content()
+            except:
+                try: driver.switch_to.default_content()
+                except: pass
+
+        # 2) Por coordenadas: a caixa fica encostada à esquerda do widget e o
+        #    Selenium 4 mede o desvio a partir do centro do elemento.
+        try:
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+            time.sleep(0.5)
+            dx = int(-el.size['width'] / 2) + 25
+            ActionChains(driver).move_to_element_with_offset(el, dx, 0).pause(0.3).click().perform()
+            print(f"   [B&H] Clique por coordenadas no widget (desvio {dx}px).")
+            return True
+        except Exception as e:
+            print(f"   [B&H] Clique por coordenadas falhou: {e}")
+            return False
+
     def resolver_captcha(self, driver, tentativas=3):
-        """Clica na caixa "Verify you are human" do Cloudflare quando ela aparece."""
+        """Clica na caixa "Confirme que é humano" do Cloudflare quando ela aparece."""
         for tentativa in range(1, tentativas + 1):
             try: html = driver.page_source
             except: html = ""
@@ -292,32 +356,33 @@ class BhPhotoVideoScraper(BaseScraper):
                 return True
 
             print(f"   [B&H] Verificação do Cloudflare no ecrã ({tentativa}/{tentativas}). A clicar...")
-            clicou = False
-            seletores = ["iframe[src*='challenges.cloudflare.com']",
-                         "iframe[title*='Cloudflare']",
-                         "div.cf-turnstile", "#cf-turnstile", "#challenge-stage"]
 
-            for seletor in seletores:
-                try: elementos = driver.find_elements(By.CSS_SELECTOR, seletor)
-                except: elementos = []
-                for el in elementos:
-                    try:
-                        if not el.is_displayed() or el.size['width'] < 10: continue
-                        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-                        time.sleep(0.5)
-                        # A caixa está encostada à esquerda do widget. O Selenium 4
-                        # mede o offset a partir do centro, daí recuar metade da
-                        # largura e avançar ~30 px.
-                        dx = int(-el.size['width'] / 2) + 30
-                        ActionChains(driver).move_to_element_with_offset(el, dx, 0).pause(0.3).click().perform()
-                        clicou = True
-                        break
-                    except Exception as e:
-                        print(f"   [B&H] Não deu para clicar em {seletor}: {e}")
-                if clicou: break
+            # O widget é desenhado depois da página, não está lá logo no início.
+            el = None
+            for _ in range(10):
+                el = self.localizar_widget(driver)
+                if el: break
+                # Há desafios que passam sozinhos, sem caixa nenhuma: não vale a
+                # pena ficar os 10 segundos à procura de um widget que não existe.
+                try:
+                    if not self.pagina_bloqueada(driver.page_source):
+                        print("   [B&H] Verificação passou sozinha.")
+                        return True
+                except: pass
+                time.sleep(1)
 
-            if not clicou:
-                print("   [B&H] Widget do Cloudflare não encontrado no ecrã.")
+            if el:
+                self.clicar_widget(driver, el)
+            else:
+                # Se voltar a falhar, o log diz que iframes existem mesmo na página.
+                print("   [B&H] Widget não encontrado. Iframes presentes:")
+                try:
+                    for f in driver.find_elements(By.TAG_NAME, "iframe"):
+                        try:
+                            print(f"      - src={(f.get_attribute('src') or '')[:70]} "
+                                  f"| id={f.get_attribute('id')} | tam={f.size}")
+                        except: pass
+                except: pass
 
             # A verificação demora alguns segundos e a página recarrega sozinha.
             for _ in range(20):
