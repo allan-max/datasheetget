@@ -15,11 +15,14 @@ class DellScraper(BaseScraper):
         try:
             print(f"   [Dell] Iniciando Scraper (V4 - Tratamento de Imagem Completo)...")
             
-            if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
-            if not os.path.exists(self.pasta_saida): os.makedirs(self.pasta_saida)
+            # A pasta certa é a do pedido (o output_folder da base). O 'pasta_saida'
+            # não existe no BaseScraper e criava uma pasta 'output' à parte.
+            if self.output_folder and not os.path.exists(self.output_folder):
+                os.makedirs(self.output_folder)
 
             options = uc.ChromeOptions()
-            options.add_argument("--headless=new") 
+            # NÃO usar --headless: em headless a Dell devolve "Access Denied" com
+            # 368 bytes e a página não traz nada. Sem headless vem completa.
             options.page_load_strategy = 'eager'
             options.add_argument("--no-first-run")
             options.add_argument("--password-store=basic")
@@ -47,11 +50,19 @@ class DellScraper(BaseScraper):
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
             # --- TÍTULO ---
-            titulo = "Produto Dell"
+            titulo = None
             div_title = soup.find("div", class_="pg-title")
             if div_title:
                 h1 = div_title.find("h1")
                 if h1: titulo = self.limpar_texto(h1.get_text())
+
+            if not titulo:
+                # Sem título não vale a pena continuar: antes saía um datasheet
+                # vazio chamado "Produto Dell" e mesmo assim com sucesso=True.
+                html = driver.page_source
+                if "Access Denied" in html:
+                    raise Exception("Bloqueado pela Dell (Access Denied)")
+                raise Exception(f"Título não encontrado (página com {len(html)} bytes)")
             print(f"   [DEBUG] Título: {titulo}")
 
             # --- IMAGEM (DOWNLOAD + SCREENSHOT + PILLOW) ---
@@ -114,7 +125,7 @@ class DellScraper(BaseScraper):
                     
                     if el_img:
                         temp_png = f"raw_dell_{int(time.time())}.png"
-                        caminho_img_raw = os.path.join(self.pasta_saida, temp_png)
+                        caminho_img_raw = os.path.join(self.output_folder, temp_png)
                         
                         # Centraliza para garantir que a imagem não saia cortada
                         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
@@ -137,7 +148,7 @@ class DellScraper(BaseScraper):
                         img = img.convert('RGB')
                         
                     final_jpeg = f"dell_final_{int(time.time())}.jpg"
-                    caminho_imagem_final = os.path.join(self.pasta_saida, final_jpeg)
+                    caminho_imagem_final = os.path.join(self.output_folder, final_jpeg)
                     
                     # Redimensiona para não estourar o limite do PDF
                     max_size = 600
@@ -157,12 +168,15 @@ class DellScraper(BaseScraper):
 
             # --- DESCRIÇÃO ---
             descricao = "Descrição indisponível."
-            desc_container = soup.find("div", id="long-description")
-            if not desc_container:
-                desc_container = soup.find("div", id="hero-long-desc")
-            if not desc_container:
-                desc_container = soup.find("div", class_="pd-features")
-                
+            # Fica com o bloco que tiver mais texto: o #long-description é só uma
+            # frase solta e a descrição a sério está no .pd-features. Antes ganhava
+            # sempre o primeiro e o datasheet saía com 106 caracteres.
+            candidatos = [soup.find("div", id="long-description"),
+                          soup.find("div", id="hero-long-desc"),
+                          soup.find("div", class_="pd-features")]
+            candidatos = [c for c in candidatos if c]
+            desc_container = max(candidatos, key=lambda c: len(c.get_text(strip=True))) if candidatos else None
+
             if desc_container:
                 for script in desc_container(["script", "style"]):
                     script.decompose()
