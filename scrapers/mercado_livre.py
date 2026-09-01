@@ -20,13 +20,11 @@ class MercadoLivreScraper(BaseScraper):
             if not os.path.exists(self.output_folder): 
                 os.makedirs(self.output_folder)
 
-            # --- Configuração Selenium com Camuflagem de SEO (Googlebot) ---
             options = uc.ChromeOptions()
             options.page_load_strategy = 'eager'
             options.add_argument("--no-first-run")
             options.add_argument("--password-store=basic")
             
-            # O SEGREDO: A assinatura exata do rastreador do Google! O ML é obrigado a deixar passar.
             options.add_argument("--user-agent=Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)")
             
             options.add_argument("--no-sandbox")
@@ -40,7 +38,6 @@ class MercadoLivreScraper(BaseScraper):
             print(f"   [Mercado Livre] Acessando URL como Googlebot: {self.url}")
             driver.get(self.url)
 
-            # 1. Espera o título carregar
             try:
                 WebDriverWait(driver, 15).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, "h1.ui-pdp-title"))

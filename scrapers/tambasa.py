@@ -30,7 +30,7 @@ class TambasaScraper(BaseScraper):
             options.add_argument("--window-size=1920,3000")
             
             # Atualiza o User-Agent para uma versão mais recente (ajuda a evitar 429 e bloqueios WAF)
-            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36')
+            # options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36')
             
             options.add_argument("--no-sandbox") 
             options.add_argument("--disable-dev-shm-usage") 
@@ -46,12 +46,17 @@ class TambasaScraper(BaseScraper):
                 driver.get(self.url)
                 
                 # Tratamento para erro 429 (Too Many Requests)
-                time.sleep(2)
-                if "Too Many Requests" in driver.page_source or "too many requests" in driver.page_source.lower():
-                    print("   [Tambasa] ⚠️ Bloqueio de 'Too Many Requests' detectado. Aguardando 10 segundos e tentando recarregar...")
-                    time.sleep(10)
-                    driver.refresh()
-                    time.sleep(3)
+                time.sleep(3)
+                max_retries = 3
+                for attempt in range(max_retries):
+                    page_source_lower = driver.page_source.lower()
+                    if "too many requests" in page_source_lower or "429 error" in page_source_lower or "acesso negado" in page_source_lower:
+                        print(f"   [Tambasa] ⚠️ Bloqueio de 'Too Many Requests' detectado (Tentativa {attempt + 1}/{max_retries}). Aguardando...")
+                        time.sleep(15 * (attempt + 1)) # Espera progressiva: 15s, 30s, 45s
+                        driver.refresh()
+                        time.sleep(5)
+                    else:
+                        break
                     
             except TimeoutException:
                 print("   [Tambasa] Aviso: A página demorou muito, forçando a extração do que já carregou!")
@@ -210,7 +215,7 @@ class TambasaScraper(BaseScraper):
             }
 
         except Exception as e:
-            print(f"   ❌ [ERRO TAMBASA] {e}")
+            print(f"   [ERRO TAMBASA] {e}")
             return {'sucesso': False, 'erro': str(e)}
         finally:
             if driver:
