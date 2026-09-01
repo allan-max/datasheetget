@@ -283,49 +283,76 @@ class BhPhotoVideoScraper(BaseScraper):
         return any(m in html for m in marcas)
 
     # O JS devolve o sítio exato da caixa "Confirme que é humano", em pixéis do
-    # ecrã. É preciso ser em JS porque o widget do Cloudflare vive dentro de um
-    # iframe de outro domínio (e às vezes dentro de shadow DOM): o Selenium não
-    # atravessa essa fronteira, e era por isso que o clique não acertava em nada.
+    # ecrã, e mais um censo do que encontrou. É preciso ser em JS porque o widget
+    # do Cloudflare pode estar dentro de shadow DOM ou de um iframe: o Selenium
+    # não atravessa essas fronteiras, e era por isso que o clique não acertava.
     JS_LOCALIZAR_WIDGET = """
-        function visivel(el) {
-            var r = el.getBoundingClientRect();
-            return r.width > 10 && r.height > 10 && r.top >= 0;
-        }
-        // 1) Caixa desenhada na própria página, mesmo que dentro de shadow DOM.
-        var pilha = [document];
-        while (pilha.length) {
-            var raiz = pilha.pop();
+        var raizes = [document], frames = [], caixas = [];
+        while (raizes.length) {
+            var raiz = raizes.pop();
             if (!raiz.querySelectorAll) continue;
-            var caixas = raiz.querySelectorAll("input[type=checkbox]");
-            for (var i = 0; i < caixas.length; i++) {
-                if (visivel(caixas[i])) {
-                    var rc = caixas[i].getBoundingClientRect();
-                    return {tipo: "caixa", x: rc.left + rc.width / 2, y: rc.top + rc.height / 2};
-                }
-            }
             var todos = raiz.querySelectorAll("*");
-            for (var j = 0; j < todos.length; j++) {
-                if (todos[j].shadowRoot) pilha.push(todos[j].shadowRoot);
+            for (var i = 0; i < todos.length; i++) {
+                var el = todos[i];
+                // Os iframes também podem estar pendurados num shadow root, por
+                // isso apanham-se aqui dentro e não só no documento de topo.
+                if (el.shadowRoot) raizes.push(el.shadowRoot);
+                if (el.tagName === "IFRAME") frames.push(el);
+                else if (el.tagName === "INPUT" && el.type === "checkbox") caixas.push(el);
+                else if (/human|humano/i.test(el.getAttribute("aria-label") || "")) caixas.push(el);
             }
         }
-        // 2) Senão, o iframe do desafio: a caixa fica encostada à esquerda.
-        var frames = document.querySelectorAll("iframe");
-        for (var k = 0; k < frames.length; k++) {
-            if (!visivel(frames[k])) continue;
-            var rf = frames[k].getBoundingClientRect();
-            if (rf.width > 600 || rf.height > 200) continue;
-            return {tipo: "iframe", x: rf.left + 28, y: rf.top + rf.height / 2,
-                    src: (frames[k].getAttribute("src") || "").slice(0, 70),
-                    w: rf.width, h: rf.height};
+        function descrever(el, tipo) {
+            var r = el.getBoundingClientRect();
+            return {tipo: tipo, id: el.id || "", src: (el.getAttribute("src") || "").slice(0, 60),
+                    x: Math.round(r.left), y: Math.round(r.top),
+                    w: Math.round(r.width), h: Math.round(r.height)};
         }
-        return null;
+        var censo = [], n;
+        for (n = 0; n < frames.length && censo.length < 8; n++) censo.push(descrever(frames[n], "iframe"));
+        for (n = 0; n < caixas.length && censo.length < 8; n++) censo.push(descrever(caixas[n], "caixa"));
+
+        // A caixa manda: é o alvo verdadeiro, tenha o tamanho que tiver.
+        for (n = 0; n < caixas.length; n++) {
+            var rc = caixas[n].getBoundingClientRect();
+            if (rc.width > 0 && rc.height > 0)
+                return {alvo: {tipo: "caixa", x: rc.left + rc.width / 2,
+                               y: rc.top + rc.height / 2}, censo: censo};
+        }
+        // Sem caixa à vista, clica-se no iframe mais pequeno (o do desafio, não
+        // os de publicidade), a 28px da esquerda: é aí que o Turnstile a põe.
+        var melhor = null, area = Infinity;
+        for (n = 0; n < frames.length; n++) {
+            var rf = frames[n].getBoundingClientRect();
+            if (rf.width < 10 || rf.height < 10) continue;
+            if (rf.width * rf.height < area) { area = rf.width * rf.height; melhor = rf; }
+        }
+        if (melhor)
+            return {alvo: {tipo: "iframe", x: melhor.left + 28,
+                           y: melhor.top + melhor.height / 2}, censo: censo};
+        return {alvo: null, censo: censo};
     """
 
     def localizar_widget(self, driver):
-        try: return driver.execute_script(self.JS_LOCALIZAR_WIDGET)
+        """Devolve (alvo, censo): onde clicar e o que existe mesmo na página."""
+        try:
+            r = driver.execute_script(self.JS_LOCALIZAR_WIDGET) or {}
+            return r.get("alvo"), r.get("censo") or []
         except Exception as e:
             print(f"   [B&H] Falha ao procurar o widget: {e}")
-            return None
+            return None, []
+
+    def guardar_pagina(self, driver, tentativa):
+        """Guarda o HTML e uma foto do que o Cloudflare mostrou, para se poder ver."""
+        if not self.output_folder: return
+        base = os.path.join(self.output_folder, f"cloudflare_bh_{int(time.time())}_{tentativa}")
+        try:
+            with open(base + ".html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+            driver.save_screenshot(base + ".png")
+            print(f"   [B&H] Página guardada em {base}.html (e .png)")
+        except Exception as e:
+            print(f"   [B&H] Não deu para guardar a página: {e}")
 
     def clicar_em(self, driver, x, y):
         """Clica nas coordenadas do ecrã com eventos do próprio Chrome (CDP).
@@ -358,9 +385,9 @@ class BhPhotoVideoScraper(BaseScraper):
             print(f"   [B&H] Verificação do Cloudflare no ecrã ({tentativa}/{tentativas}). A clicar...")
 
             # O widget é desenhado depois da página, não está lá logo no início.
-            alvo = None
+            alvo, censo = None, []
             for _ in range(10):
-                alvo = self.localizar_widget(driver)
+                alvo, censo = self.localizar_widget(driver)
                 if alvo: break
                 # Há desafios que passam sozinhos, sem caixa nenhuma: não vale a
                 # pena ficar os 10 segundos à procura de um widget que não existe.
@@ -373,19 +400,13 @@ class BhPhotoVideoScraper(BaseScraper):
 
             if alvo:
                 x, y = int(alvo["x"]), int(alvo["y"])
-                print(f"   [B&H] Widget em ({x}, {y}) via {alvo['tipo']} "
-                      f"{alvo.get('src', '')} {alvo.get('w', '')}x{alvo.get('h', '')}")
+                print(f"   [B&H] Widget em ({x}, {y}) via {alvo['tipo']}.")
                 self.clicar_em(driver, x, y)
             else:
-                # Se voltar a falhar, o log diz que iframes existem mesmo na página.
-                print("   [B&H] Widget não encontrado. Iframes presentes:")
-                try:
-                    for f in driver.find_elements(By.TAG_NAME, "iframe"):
-                        try:
-                            print(f"      - src={(f.get_attribute('src') or '')[:70]} "
-                                  f"| id={f.get_attribute('id')} | tam={f.size}")
-                        except: pass
-                except: pass
+                # Nada para clicar. O censo e a página guardada dizem porquê: ou o
+                # Cloudflare não desenhou o widget, ou está onde não se procurou.
+                print(f"   [B&H] Widget não encontrado. Elementos: {censo or 'nenhum'}")
+                self.guardar_pagina(driver, tentativa)
 
             # A verificação demora alguns segundos e a página recarrega sozinha.
             for _ in range(20):
