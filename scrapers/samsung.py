@@ -8,6 +8,8 @@ import time
 import os
 import json
 import re
+from io import BytesIO
+from PIL import Image
 from .base import BaseScraper
 
 class SamsungScraper(BaseScraper):
@@ -246,7 +248,8 @@ class SamsungScraper(BaseScraper):
                 "titulo": titulo,
                 "descricao": descricao,
                 "caracteristicas": specs_limpas,
-                "caminho_imagem_temp": self.baixar_imagem_temp(url_img)
+                "caminho_imagem_temp": self.fotografar_em_nova_aba(driver, url_img)
+                                       or self.baixar_imagem_temp(url_img)
             }
 
             arquivos = self.gerar_arquivos_finais(dados)
@@ -268,6 +271,40 @@ class SamsungScraper(BaseScraper):
             if driver:
                 try: driver.quit()
                 except: pass
+
+    def fotografar_em_nova_aba(self, driver, url_img):
+        """Abre só a imagem numa aba nova e tira a foto lá. Assim o aviso de
+        cookies da loja nunca fica à frente do produto."""
+        if not url_img or not self.output_folder or not driver: return None
+        aba_loja = driver.current_window_handle
+        try:
+            # Aba nova pelo Selenium: o window.open() é bloqueado como pop-up em
+            # headless e a foto acabava por sair do banner da loja.
+            driver.switch_to.new_window("tab")
+            driver.get(url_img)
+            el_img = WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.TAG_NAME, "img"))
+            )
+            # Espera a imagem carregar mesmo, senão a foto sai em branco.
+            WebDriverWait(driver, 15).until(
+                lambda d: d.execute_script(
+                    "return arguments[0].complete && arguments[0].naturalWidth > 0", el_img)
+            )
+            time.sleep(0.5)
+            caminho = os.path.join(self.output_folder, f"samsung_foto_{int(time.time())}.jpg")
+            png = el_img.screenshot_as_png
+            Image.open(BytesIO(png)).convert("RGB").save(caminho, "JPEG", quality=90)
+            print(f"   [Samsung] Foto tirada na aba nova: {caminho}")
+            return caminho
+        except Exception as e:
+            print(f"   [Samsung] Não deu para fotografar na aba nova ({e}); vou descarregar a imagem.")
+            return None
+        finally:
+            try:
+                if driver.current_window_handle != aba_loja:
+                    driver.close()
+                driver.switch_to.window(aba_loja)
+            except Exception: pass
 
     def ler_estado_vtex(self, soup):
         """Lê o JSON que a loja VTEX deixa na página, no template __STATE__.

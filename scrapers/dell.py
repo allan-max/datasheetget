@@ -82,9 +82,15 @@ class DellScraper(BaseScraper):
                 print(f"   [Dell] URL da imagem encontrada: {url_img}")
                 caminho_img_raw = self.baixar_imagem_temp(url_img)
 
-           # Se o download falhar, tenta o screenshot (com DESTRUIÇÃO de cookies)
+            # Se o download falhar, abre só a imagem numa aba nova e tira a foto lá:
+            # sem a loja por trás não há banner de cookies para ficar à frente.
+            if url_img and (not caminho_img_raw or not os.path.exists(caminho_img_raw)):
+                print("   [Dell] Download bloqueado pela Dell. Fotografando a imagem numa aba nova...")
+                caminho_img_raw = self.fotografar_em_nova_aba(driver, url_img)
+
+           # Se ainda assim falhar, tenta o screenshot na própria página (com DESTRUIÇÃO de cookies)
             if not caminho_img_raw or not os.path.exists(caminho_img_raw):
-                print("   [Dell] Download bloqueado pela Dell. Extraindo via screenshot limpo...")
+                print("   [Dell] Extraindo via screenshot limpo...")
                 try:
                     # --- OCULTADOR DE BANNERS (MÉTODO SEGURO VIA CSS) ---
                     print("   [Dell] A ocultar o banner de cookies via CSS...")
@@ -251,6 +257,38 @@ class DellScraper(BaseScraper):
                 try: driver.quit()
                 except: pass
     
+    def fotografar_em_nova_aba(self, driver, url_img):
+        """Abre só a imagem numa aba nova e tira a foto lá. Assim o banner de
+        cookies da Dell nunca fica à frente do produto. Devolve o PNG bruto."""
+        if not url_img or not self.output_folder or not driver: return None
+        aba_loja = driver.current_window_handle
+        try:
+            # Aba nova pelo Selenium: o window.open() é bloqueado como pop-up.
+            driver.switch_to.new_window("tab")
+            driver.get(url_img)
+            el_img = WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.TAG_NAME, "img"))
+            )
+            # Espera a imagem carregar mesmo, senão a foto sai em branco.
+            WebDriverWait(driver, 15).until(
+                lambda d: d.execute_script(
+                    "return arguments[0].complete && arguments[0].naturalWidth > 0", el_img)
+            )
+            time.sleep(0.5)
+            caminho = os.path.join(self.output_folder, f"raw_dell_{int(time.time())}.png")
+            el_img.screenshot(caminho)
+            print(f"   [Dell] Foto tirada na aba nova: {caminho}")
+            return caminho
+        except Exception as e:
+            print(f"   [Dell] Não deu para fotografar na aba nova ({e}); vou tentar na página.")
+            return None
+        finally:
+            try:
+                if driver.current_window_handle != aba_loja:
+                    driver.close()
+                driver.switch_to.window(aba_loja)
+            except Exception: pass
+
     def limpar_descricao_dell(self, texto):
         if not texto: return ""
         palavras_proibidas = ["adquira", "compre", "clique", "confira", "garantia", "troca avançada", "hardware limitado", "serviço de troca", "dell.com", "fale conosco"]
