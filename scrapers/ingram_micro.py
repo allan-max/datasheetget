@@ -54,7 +54,7 @@ class IngramMicroScraper(BaseScraper):
             # e demora uns 10-15 s a aparecer depois do HTML.
             print("   [Ingram] Aguardando renderização do conteúdo...")
             try:
-                WebDriverWait(driver, 40).until(
+                WebDriverWait(driver, 60).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='pdp_ProductTitle']"))
                 )
             except:
@@ -91,9 +91,14 @@ class IngramMicroScraper(BaseScraper):
                 # Sem título não vale a pena continuar: antes saía um datasheet
                 # vazio chamado "Produto Ingram" e mesmo assim com sucesso=True.
                 html = driver.page_source
+                self.guardar_pagina(driver)
+                try: texto = driver.execute_script("return document.body.innerText.slice(0, 200)")
+                except Exception: texto = ""
+                texto = self.limpar_texto(texto)
                 if "Não é possível acessar esse site" in html or "ERR_" in html:
-                    raise Exception("A página da Ingram não carregou (erro de rede do Chrome)")
-                raise Exception(f"Título não encontrado (página com {len(html)} bytes)")
+                    raise Exception(f"A página da Ingram não carregou (erro de rede do Chrome): {texto}")
+                raise Exception(f"Título não encontrado (página com {len(html)} bytes, "
+                                f"endereço final {driver.current_url}, texto: '{texto}')")
 
             print(f"   [DEBUG] Título: {titulo}")
 
@@ -205,6 +210,19 @@ class IngramMicroScraper(BaseScraper):
             if driver:
                 try: driver.quit()
                 except: pass
+
+    def guardar_pagina(self, driver):
+        """Guarda o HTML e uma foto do que a Ingram mostrou, para se poder ver
+        no servidor porque é que o título não apareceu."""
+        if not self.output_folder: return
+        base = os.path.join(self.output_folder, f"ingram_falha_{int(time.time())}")
+        try:
+            with open(base + ".html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+            driver.save_screenshot(base + ".png")
+            print(f"   [Ingram] Página guardada em {base}.html (e .png)")
+        except Exception as e:
+            print(f"   [Ingram] Não deu para guardar a página: {e}")
 
     # Função auxiliar para baixar imagem usando a sessão do Selenium
     def baixar_imagem_com_cookies(self, driver, url):
