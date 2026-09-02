@@ -17,11 +17,14 @@ class IngramMicroScraper(BaseScraper):
             print(f"   [Ingram Micro] Iniciando Scraper (V19 - Timeout Tático)...")
             
             # --- SETUP ---
-            if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
-            if not os.path.exists(self.pasta_saida): os.makedirs(self.pasta_saida)
+            # A pasta certa é a do pedido (o output_folder da base). O 'pasta_saida'
+            # não existe no BaseScraper e criava uma pasta 'output' à parte.
+            if self.output_folder and not os.path.exists(self.output_folder):
+                os.makedirs(self.output_folder)
 
             options = uc.ChromeOptions()
-            options.add_argument("--headless=new") 
+            # NÃO usar --headless: em headless a Ingram nunca chega a carregar
+            # (fica em "Nova guia" até ao timeout). Sem headless vem completa.
             # Eager: Espera o HTML carregar, mas não imagens pesadas
             options.page_load_strategy = 'eager' 
             options.add_argument("--no-first-run")
@@ -29,7 +32,8 @@ class IngramMicroScraper(BaseScraper):
             options.add_argument("--disable-http2")
             options.add_argument("--window-size=1920,1080")
 
-            driver = uc.Chrome(options=options, version_main=144)
+            # CRÍTICO: Versão 109 para rodar no Windows Server 2012 R2
+            driver = uc.Chrome(options=options, version_main=109)
             
             # 1. ACESSO COM TIMEOUT CONTROLADO
             print(f"   [Ingram] Acessando: {self.url}")
@@ -45,42 +49,52 @@ class IngramMicroScraper(BaseScraper):
                 try: driver.execute_script("window.stop();")
                 except: pass
             
-            # Espera inteligente pelo Título (garante que o conteúdo útil carregou)
+            # Espera inteligente pelo Título (garante que o conteúdo útil carregou).
+            # A página é React e não tem <h1>: o título vem em data-testid=pdp_ProductTitle
+            # e demora uns 10-15 s a aparecer depois do HTML.
             print("   [Ingram] Aguardando renderização do conteúdo...")
             try:
-                WebDriverWait(driver, 10).until(
-                    lambda d: d.find_element(By.TAG_NAME, "h1") or \
-                              d.find_element(By.CLASS_NAME, "product-name")
+                WebDriverWait(driver, 40).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='pdp_ProductTitle']"))
                 )
             except:
                 print("   ⚠️ Aviso: Título principal demorou a aparecer.")
 
-            # 2. INTERAÇÃO (Expandir Abas)
+            # A ficha técnica só é montada uns 2 s depois do título; se se ler
+            # a página logo a seguir vem com 0 specs.
             try:
-                # Procura abas de especificações e clica
-                abas = driver.find_elements(By.XPATH, "//*[contains(@class, 'MuiTab') or contains(text(), 'Especifica')]")
-                for aba in abas:
-                    if aba.is_displayed():
-                        driver.execute_script("arguments[0].click();", aba)
-                        time.sleep(0.5)
+                WebDriverWait(driver, 20).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='TechnicalSpecification'] table tr"))
+                )
+            except:
+                print("   ⚠️ Aviso: Especificações técnicas não apareceram.")
+
+            # 2. INTERAÇÃO: as specs já vêm no HTML; só a descrição completa
+            # fica atrás do "Ver todos os detalhes do produto".
+            try:
+                for link in driver.find_elements(By.CSS_SELECTOR, "[data-testid='pdp_fullDescpLink']"):
+                    if link.is_displayed():
+                        driver.execute_script("arguments[0].click();", link)
+                        time.sleep(1.5)
             except: pass
 
             # 3. EXTRAÇÃO
             soup = BeautifulSoup(driver.page_source, 'html.parser')
 
             # --- TÍTULO ---
-            titulo = "Produto Ingram"
-            h1 = soup.find("h1")
-            if h1:
-                titulo = self.limpar_texto(h1.get_text())
-            else:
-                # Tentativas extras
-                candidates = soup.find_all(class_=lambda c: c and ("product-name" in c or "title" in c))
-                for c in candidates:
-                    if len(c.get_text()) > 10:
-                        titulo = self.limpar_texto(c.get_text())
-                        break
-            
+            titulo = None
+            el_titulo = soup.find(attrs={"data-testid": "pdp_ProductTitle"})
+            if el_titulo:
+                titulo = self.limpar_texto(el_titulo.get_text())
+
+            if not titulo:
+                # Sem título não vale a pena continuar: antes saía um datasheet
+                # vazio chamado "Produto Ingram" e mesmo assim com sucesso=True.
+                html = driver.page_source
+                if "Não é possível acessar esse site" in html or "ERR_" in html:
+                    raise Exception("A página da Ingram não carregou (erro de rede do Chrome)")
+                raise Exception(f"Título não encontrado (página com {len(html)} bytes)")
+
             print(f"   [DEBUG] Título: {titulo}")
 
             # --- IMAGEM (Download Autenticado) ---
@@ -88,13 +102,17 @@ class IngramMicroScraper(BaseScraper):
             url_img = None
             
             print("   [Ingram] Buscando imagem...")
+            # A foto do produto tem data-testid="<SKU>-0-slideImg" e vem do
+            # inquirecontent2.ingrammicro.com; o resto são ícones e logos.
             imgs = soup.find_all("img")
             for img in imgs:
                 src = img.get("src", "")
-                if "pimcontent" in src or "assets/images/product" in src:
+                testid = img.get("data-testid", "")
+                if testid.endswith("-slideImg") or "inquirecontent" in src \
+                        or "pimcontent" in src or "assets/images/product" in src:
                     url_img = src
                     break
-            
+
             if not url_img:
                 # Fallback: pega a maior imagem da tela
                 try:
@@ -116,29 +134,39 @@ class IngramMicroScraper(BaseScraper):
 
             # --- DESCRIÇÃO ---
             descricao = "Descrição indisponível."
-            # Tenta pegar a descrição longa
-            divs = soup.find_all("div")
-            # Ordena divs por quantidade de texto (descrições costumam ser grandes)
-            divs_com_texto = sorted([d for d in divs if 200 < len(d.get_text()) < 5000], key=lambda x: len(x.get_text()), reverse=True)
-            
-            if divs_com_texto:
-                # Pega a maior, mas verifica se não é lixo (menu/footer)
-                cand = divs_com_texto[0].get_text(separator="\n", strip=True)
-                if "termos de uso" not in cand.lower():
-                    descricao = cand[:2000] # Limita tamanho
+            # A descrição está em blocos próprios. O "maior div da página" que
+            # se usava antes apanhava o centro de preferências de cookies.
+            for testid in ["OverviewDescription", "pdp_ProductDescription"]:
+                bloco = soup.find(attrs={"data-testid": testid})
+                if bloco and len(bloco.get_text(strip=True)) > 20:
+                    descricao = self.limpar_lixo_comercial(bloco.get_text(separator="\n", strip=True))
+                    break
 
             # --- SPECS ---
             specs = {}
-            tabelas = soup.find_all("table")
+            # Só as tabelas da aba "Especificações técnicas". Linhas com a chave
+            # vazia são continuação da anterior (ex.: vários dispositivos).
+            bloco_specs = soup.find(attrs={"data-testid": "TechnicalSpecification"}) or soup
+            tabelas = bloco_specs.find_all("table")
             for t in tabelas:
+                ultima = None   # a continuação nunca atravessa tabelas
                 rows = t.find_all("tr")
                 for r in rows:
-                    cols = r.find_all(["td", "th"])
-                    if len(cols) == 2:
-                        k = self.limpar_texto(cols[0].get_text())
-                        v = self.limpar_texto(cols[1].get_text())
-                        if k and v: specs[k] = v
-            
+                    cols = r.find_all(["td", "th"], recursive=False)
+                    if len(cols) != 2: continue
+                    # A linha de fora, cujas células embrulham sub-tabelas inteiras,
+                    # não é uma spec: é a moldura.
+                    if r.find("table"): continue
+                    k = self.limpar_texto(cols[0].get_text())
+                    v = self.limpar_texto(cols[1].get_text())
+                    if not v: continue
+                    if not k and ultima:
+                        specs[ultima] = specs[ultima] + ", " + v
+                    elif k and k not in specs:
+                        specs[k] = v
+                        ultima = k
+            specs.pop("Endereço do website do fabricante", None)
+
             # Se não achou tabelas, tenta listas LI
             if not specs:
                 lis = soup.find_all("li")
@@ -196,7 +224,7 @@ class IngramMicroScraper(BaseScraper):
             if resp.status_code == 200:
                 ext = "jpg" if ".jpg" in url else "png"
                 filename = f"temp_img_ingram.{ext}"
-                caminho = os.path.join(self.pasta_saida, filename)
+                caminho = os.path.join(self.output_folder, filename)
                 with open(caminho, 'wb') as f:
                     f.write(resp.content)
                 return caminho
