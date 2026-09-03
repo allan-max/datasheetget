@@ -83,13 +83,23 @@ class CasasBahiaScraper(BaseScraper):
 
                 print(f"   [Casas Bahia] A aguardar renderização (tentativa {tentativa}/3)...")
                 try:
+                    # Não basta haver um <h1>: a página inicial também tem um. Se o
+                    # produto demorar a carregar, o <h1> "Casas Bahia - Página Inicial"
+                    # dava a página por boa e o datasheet saía vazio. Exige-se o
+                    # endereço do produto (/p/) além do título.
                     WebDriverWait(driver, 40).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "h1"))
+                        lambda d: "/p/" in d.current_url and d.find_elements(By.CSS_SELECTOR, "h1")
                     )
                     pagina_ok = True
                     break
                 except:
                     pass
+
+                if "/p/" not in driver.current_url:
+                    print(f"   ⚠️ Ainda na página inicial ({driver.current_url[:60]}); a entrar direto no produto.")
+                    if tentativa < 3:
+                        time.sleep(3)
+                    continue
 
                 estado = self.diagnosticar_bloqueio(driver.page_source)
                 print(f"   ⚠️ H1 não apareceu. Estado: {estado}")
@@ -166,6 +176,8 @@ class CasasBahiaScraper(BaseScraper):
                 titulo = self.limpar_texto(h1.get_text())
             if not titulo:
                 raise Exception(f"Título não encontrado — {self.diagnosticar_bloqueio(driver.page_source)}")
+            if "/p/" not in driver.current_url or "página inicial" in titulo.lower():
+                raise Exception(f"O navegador não saiu da página inicial (ficou em {driver.current_url[:80]})")
             print(f"   ✅ Título capturado: {titulo}")
 
             # --- DESCRIÇÃO ---
