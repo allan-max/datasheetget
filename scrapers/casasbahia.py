@@ -1,5 +1,8 @@
 # scrapers/casasbahia.py
 import undetected_chromedriver as uc
+from undetected_chromedriver.patcher import Patcher
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
@@ -8,11 +11,20 @@ from bs4 import BeautifulSoup
 import time
 import os
 import re
+import urllib.request
 from .base import BaseScraper
 
 class CasasBahiaScraper(BaseScraper):
+    # Chrome aberto à mão no servidor, com porta de depuração:
+    #   chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\chrome_robo"
+    # O sensor do Akamai reprova qualquer Chrome lançado pelo chromedriver
+    # (cookie _abck ~-1~ e página customdeny), mas aprova um Chrome aberto pela
+    # pessoa. O scraper liga-se a esse Chrome se ele existir; senão lança o seu.
+    CHROME_ABERTO = "127.0.0.1:9222"
+
     def executar(self):
         driver = None
+        aba_robo = None
         try:
             print(f"   [Casas Bahia] A iniciar Scraper (Motor de Auto-Click Duplo)...")
 
@@ -21,43 +33,14 @@ class CasasBahiaScraper(BaseScraper):
             if not os.path.exists(self.output_folder):
                 os.makedirs(self.output_folder)
 
-            options = uc.ChromeOptions()
-            options.page_load_strategy = 'eager'
-            options.add_argument("--no-first-run")
-            options.add_argument("--password-store=basic")
-            # NÃO forjar o User-Agent: o Akamai da Casas Bahia compara o UA com os
-            # client hints (sec-ch-ua) do Chrome real e devolve a página de bloqueio
-            # 'customdeny' de 3 KB. Sem o override a página abre normalmente.
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-gpu")
-            # NÃO usar --disable-http2 aqui: o Chrome 109 real fala sempre HTTP/2 com
-            # o Akamai. Forçar HTTP/1.1 faz o navegador dizer que é Chrome mas negociar
-            # como outra coisa, e a assinatura HTTP/2 em falta é ela própria um sinal.
-            # Perfil novo arranca em inglês; um comprador brasileiro manda pt-BR.
-            options.add_argument("--lang=pt-BR")
-            options.add_argument("--window-size=1920,1080")
-
-            driver = uc.Chrome(options=options, version_main=109)
-            driver.set_window_size(1920, 1080)
-
-            driver.set_page_load_timeout(60)
-
-            # O undetected_chromedriver arranca sempre num perfil vazio. Entrar
-            # direto no link do produto com um navegador sem cookies nem histórico
-            # é o padrão que o Akamai nega de imediato ('customdeny'), sem sequer
-            # dar o desafio. Passar primeiro pela homepage deixa o sensor do Akamai
-            # correr e validar os cookies da sessão (_abck), tal como acontece
-            # quando se abre o site à mão.
-            print("   [Casas Bahia] A aquecer a sessão pela página inicial...")
-            try:
-                driver.get("https://www.casasbahia.com.br/")
-                time.sleep(8)
-                # Saber se a inicial passou é o que distingue 'sessão recusada logo
-                # à entrada' de 'o sensor do Akamai correu e reprovou o navegador'.
-                print(f"   [Casas Bahia] Estado da página inicial: {self.diagnosticar_bloqueio(driver.page_source)}")
-            except Exception as e:
-                print(f"   ⚠️ Aviso: não foi possível abrir a página inicial: {e}")
+            driver = self.ligar_chrome_aberto()
+            if driver:
+                # Trabalha numa aba própria para não mexer no que a pessoa tem aberto
+                driver.switch_to.new_window("tab")
+                aba_robo = driver.current_window_handle
+                driver.set_page_load_timeout(60)
+            else:
+                driver = self.lancar_chrome()
 
             print(f"   [Casas Bahia] A aceder a: {self.url}")
 
@@ -68,7 +51,7 @@ class CasasBahiaScraper(BaseScraper):
             pagina_ok = False
             for tentativa in range(1, 4):
                 try:
-                    if tentativa == 1:
+                    if tentativa == 1 and not aba_robo:
                         # Navegar a partir da própria página envia o Referer da Casas
                         # Bahia. O driver.get() entra sem Referer nenhum, que é
                         # precisamente o que um robô faz e uma pessoa não.
@@ -309,9 +292,76 @@ class CasasBahiaScraper(BaseScraper):
             print(f"   ❌ [ERRO CASAS BAHIA] {e}")
             return {'sucesso': False, 'erro': str(e)}
         finally:
+            if driver and aba_robo:
+                # Chrome da pessoa: fecha só a aba do robô e solta a ligação
+                try:
+                    driver.switch_to.window(aba_robo)
+                    driver.close()
+                except: pass
             if driver:
                 try: driver.quit()
                 except: pass
+
+    def ligar_chrome_aberto(self):
+        """Liga-se ao Chrome aberto à mão (porta 9222). Devolve None se não houver."""
+        try:
+            urllib.request.urlopen(f"http://{self.CHROME_ABERTO}/json/version", timeout=2).read()
+        except Exception:
+            print("   [Casas Bahia] Sem Chrome aberto na porta 9222; vou lançar o meu.")
+            return None
+        try:
+            patcher = Patcher(version_main=109)
+            patcher.auto()
+            options = webdriver.ChromeOptions()
+            options.debugger_address = self.CHROME_ABERTO
+            driver = webdriver.Chrome(service=Service(patcher.executable_path), options=options)
+            print("   [Casas Bahia] Ligado ao Chrome aberto na porta 9222.")
+            return driver
+        except Exception as e:
+            print(f"   ⚠️ Não consegui ligar ao Chrome aberto ({e}); vou lançar o meu.")
+            return None
+
+    def lancar_chrome(self):
+        """Caminho antigo: lança um Chrome novo e aquece pela página inicial.
+        O Akamai costuma reprová-lo; fica como reserva."""
+        options = uc.ChromeOptions()
+        options.page_load_strategy = 'eager'
+        options.add_argument("--no-first-run")
+        options.add_argument("--password-store=basic")
+        # NÃO forjar o User-Agent: o Akamai da Casas Bahia compara o UA com os
+        # client hints (sec-ch-ua) do Chrome real e devolve a página de bloqueio
+        # 'customdeny' de 3 KB. Sem o override a página abre normalmente.
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        # NÃO usar --disable-http2 aqui: o Chrome 109 real fala sempre HTTP/2 com
+        # o Akamai. Forçar HTTP/1.1 faz o navegador dizer que é Chrome mas negociar
+        # como outra coisa, e a assinatura HTTP/2 em falta é ela própria um sinal.
+        # Perfil novo arranca em inglês; um comprador brasileiro manda pt-BR.
+        options.add_argument("--lang=pt-BR")
+        options.add_argument("--window-size=1920,1080")
+
+        driver = uc.Chrome(options=options, version_main=109)
+        driver.set_window_size(1920, 1080)
+
+        driver.set_page_load_timeout(60)
+
+        # O undetected_chromedriver arranca sempre num perfil vazio. Entrar
+        # direto no link do produto com um navegador sem cookies nem histórico
+        # é o padrão que o Akamai nega de imediato ('customdeny'), sem sequer
+        # dar o desafio. Passar primeiro pela homepage deixa o sensor do Akamai
+        # correr e validar os cookies da sessão (_abck), tal como acontece
+        # quando se abre o site à mão.
+        print("   [Casas Bahia] A aquecer a sessão pela página inicial...")
+        try:
+            driver.get("https://www.casasbahia.com.br/")
+            time.sleep(8)
+            # Saber se a inicial passou é o que distingue 'sessão recusada logo
+            # à entrada' de 'o sensor do Akamai correu e reprovou o navegador'.
+            print(f"   [Casas Bahia] Estado da página inicial: {self.diagnosticar_bloqueio(driver.page_source)}")
+        except Exception as e:
+            print(f"   ⚠️ Aviso: não foi possível abrir a página inicial: {e}")
+        return driver
 
     def diagnosticar_bloqueio(self, html):
         """Diz porque é que a página não veio, em vez do genérico 'layout mudou'."""
