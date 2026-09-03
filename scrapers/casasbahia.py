@@ -104,7 +104,8 @@ class CasasBahiaScraper(BaseScraper):
                     time.sleep(10)
 
             if not pagina_ok:
-                self.salvar_html_falha(driver.page_source)
+                print(f"   [Casas Bahia] Sensor do Akamai: {self.estado_sensor(driver)}")
+                self.guardar_pagina(driver)
 
             # --- ROLAGEM PROGRESSIVA ---
             print("   [Casas Bahia] A vasculhar a página para contornar o Lazy Load...")
@@ -307,22 +308,39 @@ class CasasBahiaScraper(BaseScraper):
         if "sec-if-cpt-container" in html or "Powered and protected by" in html:
             return "parou no desafio anti-bot do Akamai (a verificação não foi ultrapassada)"
         if "customdeny" in html or "Access Denied" in html:
-            return "acesso negado pelo Akamai (o IP do servidor está bloqueado)"
+            return "acesso negado pelo Akamai (página customdeny; ver a linha do sensor)"
         if "Too Many Requests" in html or "429" == html.strip():
             return "bloqueio por excesso de pedidos (429)"
         if len(html) < 5000:
             return f"a página veio praticamente vazia ({len(html)} bytes)"
         return f"a página carregou ({len(html)} bytes) mas sem H1 — o layout pode ter mudado"
 
-    def salvar_html_falha(self, html):
-        """Guarda o HTML recebido para se poder ver o que o servidor apanhou."""
+    def estado_sensor(self, driver):
+        """O cookie _abck diz se o sensor do Akamai aprovou o navegador: termina em
+        '~0~' quando aprovou e em '~-1~' quando o marcou como robô. É esta linha
+        que separa 'IP bloqueado' de 'navegador reprovado' quando corre no servidor."""
         try:
-            caminho = os.path.join(self.output_folder, "falha_casasbahia.html")
-            with open(caminho, "w", encoding="utf-8") as f:
-                f.write(html or "")
-            print(f"   [Casas Bahia] HTML da falha guardado em: {caminho}")
+            for c in driver.get_cookies():
+                if c.get("name") == "_abck":
+                    v = c.get("value", "")
+                    if "~-1~" in v: return "reprovou o navegador (_abck ~-1~)"
+                    if "~0~" in v: return "aprovou o navegador (_abck ~0~)"
+                    return f"_abck presente mas sem veredicto ({v[:40]}...)"
+            return "sem cookie _abck (o sensor nem chegou a correr)"
         except Exception as e:
-            print(f"   ⚠️ Não foi possível guardar o HTML da falha: {e}")
+            return f"não foi possível ler os cookies ({e})"
+
+    def guardar_pagina(self, driver):
+        """Guarda o HTML e uma foto do que o navegador está a mostrar, para se
+        poder ver o que o servidor apanhou quando a página não vem."""
+        try:
+            base = os.path.join(self.output_folder, f"casasbahia_falha_{int(time.time())}")
+            with open(base + ".html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source or "")
+            driver.save_screenshot(base + ".png")
+            print(f"   [Casas Bahia] Página guardada em: {base}.html / .png")
+        except Exception as e:
+            print(f"   ⚠️ Não foi possível guardar a página da falha: {e}")
 
     def extrair_specs_modal(self, soup):
         """Ficha técnica completa: <p>Chave</p><span>Valor</span> dentro do modal."""
