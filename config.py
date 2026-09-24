@@ -81,6 +81,11 @@ SITES_CONFIG = {
         'modulo': 'midea',
         'classe': 'MideaScraper'
     },
+    'CREATIVE_COPIAS': {
+        'padroes_url': [r'creativecopias\.com\.br'],
+        'modulo': 'creativecopias',
+        'classe': 'CreativeCopiasScraper'
+    },
     'CASAS_BAHIA': {
         'padroes_url': [r'casasbahia\.com\.br'],
         'modulo': 'casasbahia',
