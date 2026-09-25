@@ -259,6 +259,11 @@ SITES_CONFIG = {
         'modulo': 'bhphotovideo',
         'classe': 'BhPhotoVideoScraper'
     },
+    'BELMICRO': {
+        'padroes_url': [r'belmicro\.com\.br'],
+        'modulo': 'belmicro',
+        'classe': 'BelmicroScraper'
+    },
     'intelbras': {
         'padroes_url': [r'intelbras\.com'],
         'modulo': 'intelbras',
