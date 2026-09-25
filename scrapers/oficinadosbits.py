@@ -30,7 +30,7 @@ class OficinaDosBitsScraper(BaseScraper):
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--window-size=1920,1080")
             
-            driver = uc.Chrome(options=options, version_main=153)
+            driver = uc.Chrome(options=options, version_main=109)
             driver.set_window_size(1920, 1080)
             
             print(f"   [Oficina dos Bits] Acessando: {self.url}")
