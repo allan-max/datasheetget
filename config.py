@@ -204,6 +204,11 @@ SITES_CONFIG = {
         'modulo': 'consul',
         'classe': 'ConsulScraper'
     },
+    'OFICINADOSBITS':{
+        'padroes_url': [r'oficinadosbits\.com\.br'],
+        'modulo': 'oficinadosbits',
+        'classe': 'OficinaDosBitsScraper'
+    },
     'LENOVO': {
         'padroes_url': [r'lenovo\.com'],
         'modulo': 'lenovo',

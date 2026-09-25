@@ -1,0 +1,6 @@
+1. Abra um terminal e inicie a API:
+    python run.py
+
+  2. Abra um segundo terminal (ou use um programa como Postman) e dispare o pedido de teste na sua API local (rodando
+  na porta 6004):
+    Invoke-RestMethod -Uri "http://localhost:6004/api/datasheet/processar" -Method Post -ContentType "application/json" -Body '{"url":"LINK DO SITE"}'
