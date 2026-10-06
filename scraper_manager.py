@@ -2,7 +2,9 @@
 import importlib
 import sys
 import os
+import config
 from config import identificar_site
+from urllib.parse import urlparse
 
 # --- CORREÇÃO DE PATH ---
 # Adiciona o diretório atual (onde está este arquivo) ao sys.path
@@ -33,10 +35,17 @@ class ScraperManager:
     
     def executar_scraping(self, url, output_folder):
         try:
+            dominio_bloqueado = config.site_bloqueado(url)
+            if dominio_bloqueado:
+                return {'sucesso': False, 'erro': 'Site bloqueado para datasheet: ' + dominio_bloqueado}
             site_nome, modulo_nome, classe_nome = identificar_site(url)
             
             if not site_nome:
-                return {'sucesso': False, 'erro': 'Site não configurado ou URL inválida'}
+                if not config.UNIVERSAL_ATIVO:
+                    return {'sucesso': False, 'erro': 'Site não configurado ou URL inválida'}
+                site_nome, modulo_nome, classe_nome = 'UNIVERSAL', 'universal', 'UniversalScraper'
+                dominio = (urlparse(url).hostname or "URL invalida").encode("ascii", "backslashreplace").decode("ascii")
+                print(f"   --> Iniciando scraper: UNIVERSAL (site sem adapter: {dominio})")
             
             ClasseScraper = self.carregar_scraper(modulo_nome, classe_nome)
             

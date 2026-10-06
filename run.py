@@ -6,6 +6,8 @@ import json
 import threading
 import requests
 import importlib
+import config
+from urllib.parse import urlparse
 from datetime import datetime
 from io import BytesIO
 from flask import Flask, request, jsonify, send_from_directory
@@ -177,9 +179,19 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 class ScraperManager:
     def executar_scraping(self, url, pasta_pedido):
         try:
+            dominio_bloqueado = config.site_bloqueado(url)
+            if dominio_bloqueado:
+                return {'sucesso': False, 'erro': 'Site bloqueado para datasheet: ' + dominio_bloqueado}
             site_nome, modulo_nome, classe_nome = identificar_site(url)
             if not site_nome:
-                return {'sucesso': False, 'erro': 'Site não configurado'}
+                # O cadastro completo fica em config.py; esta copia tem poucos sites.
+                site_nome, modulo_nome, classe_nome = config.identificar_site(url)
+            if not site_nome:
+                if not config.UNIVERSAL_ATIVO:
+                    return {'sucesso': False, 'erro': 'Site não configurado'}
+                site_nome, modulo_nome, classe_nome = 'UNIVERSAL', 'universal', 'UniversalScraper'
+                dominio = (urlparse(url).hostname or "URL invalida").encode("ascii", "backslashreplace").decode("ascii")
+                print(f"   --> Iniciando scraper: UNIVERSAL (site sem adapter: {dominio})", flush=True)
             
             # Importa dinamicamente da pasta /scrapers
             modulo = importlib.import_module(f"scrapers.{modulo_nome}")
@@ -187,7 +199,10 @@ class ScraperManager:
             
             scraper = ClasseScraper(url)
             scraper.output_folder = pasta_pedido
-            print(f"   🔎 [ROBÔ] Iniciando: {site_nome}", flush=True)
+            if site_nome == 'UNIVERSAL':
+                print("   [ROBO] Iniciando: UNIVERSAL", flush=True)
+            else:
+                print(f"   [ROBO] Iniciando: {site_nome}", flush=True)
             return scraper.executar()
         except Exception as e:
             return {'sucesso': False, 'erro': str(e)}
@@ -257,7 +272,7 @@ def health():
 if __name__ == '__main__':
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print("="*60)
-    print(f"🚀 DATASHEET MONOLITO ONLINE - PORTA 6004 versão unico arquivo")
-    print(f"📁 SALVANDO EM: {OUTPUT_DIR}")
+    print("[ROBO] DATASHEET MONOLITO ONLINE - PORTA 6004")
+    print(f"[ROBO] SALVANDO EM: {OUTPUT_DIR}")
     print("="*60)
     app.run(host='0.0.0.0', port=6004, threaded=True, debug=False)
