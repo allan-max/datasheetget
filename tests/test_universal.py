@@ -124,5 +124,28 @@ class UniversalTest(unittest.TestCase):
             self.assertFalse(run.ScraperManager().executar_scraping(url, "output")["sucesso"])
         self.assertEqual(config.identificar_site("https://www.dell.com/produto")[0], "DELL")
 
+    def test_sites_com_adapter_sao_habilitados_nos_dois_managers(self):
+        from importlib import import_module
+        urls = ("https://www.weg.net/catalog/produto",
+                "https://www.magazineluiza.com.br/produto",
+                "https://marchesoni.com.br/estufa-ouro/",
+                "https://www.eaton.com/br/produto",
+                "https://projetelas.com.br/produto/classic-lx",
+                "https://www.terabyteshop.com.br/produto/123")
+        with tempfile.TemporaryDirectory() as pasta:
+            for url in urls:
+                site, modulo, nome_classe = config.identificar_site(url)
+                self.assertIsNotNone(site)
+                self.assertIsNone(config.site_bloqueado(url))
+                classe = getattr(import_module("scrapers." + modulo), nome_classe)
+                esperado = {"sucesso": True, "adapter": site}
+                with patch.object(classe, "executar", return_value=esperado):
+                    for manager in (scraper_manager.ScraperManager(), run.ScraperManager()):
+                        self.assertEqual(manager.executar_scraping(url, pasta), esperado)
+            self.assertEqual(os.listdir(pasta), [])
+        self.assertIsNone(config.site_bloqueado("https://www.magaluempresas.com.br/produto"))
+        self.assertIsNone(config.site_bloqueado("https://weg.net.evil.example/produto"))
+
+
 if __name__ == "__main__":
     unittest.main()
