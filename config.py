@@ -69,6 +69,21 @@ SITES_CONFIG = {
         'modulo': 'projetelas',
         'classe': 'ProjetelasScraper'
     },
+    'MARCHESONI': {
+        'padroes_url': [r'marchesoni\.com\.br'],
+        'modulo': 'marchesoni',
+        'classe': 'MarchesoniScraper'
+    },
+    'EATON': {
+        'padroes_url': [r'eaton\.com'],
+        'modulo': 'eaton',
+        'classe': 'EatonScraper'
+    },
+    'TERABYTESHOP': {
+        'padroes_url': [r'terabyteshop\.com\.br'],
+        'modulo': 'terabyteshop',
+        'classe': 'TerabyteShopScraper'
+    },
     'BRADYID': {
         'padroes_url': [r'bradyid\.com'],
         'modulo': 'bradyid',
