@@ -1,5 +1,18 @@
 # config.py
 import re
+from urllib.parse import urlparse
+
+UNIVERSAL_ATIVO = True
+
+# Adicione aqui dominios que devam ficar temporariamente sem geracao.
+SITES_BLOQUEADOS = ()
+
+def site_bloqueado(url):
+    host = (urlparse(url).hostname or '').lower().rstrip('.')
+    for dominio in SITES_BLOQUEADOS:
+        if host == dominio or host.endswith('.' + dominio):
+            return host
+    return None
 
 # ==============================================================================
 # 📋 LISTA DE SITES SUPORTADOS
@@ -14,7 +27,7 @@ SITES_CONFIG = {
     'ACIMAQ': {
         'padroes_url': [r'acimaq\.com\.br'],
         'modulo': 'acimaq',
-        'class': 'AcimaqScraper'
+        'classe': 'AcimaqScraper'
     },
     'AMAZON': {
         'padroes_url': [r'amazon\.com', r'amzn\.to'],
