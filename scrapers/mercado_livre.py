@@ -131,19 +131,33 @@ class MercadoLivreScraper(BaseScraper):
             print("   [Mercado Livre] A extrair Imagem Gigante...")
             url_img = None
             
-            # O ML guarda a imagem de alta resolução (zoom) no data-zoom ou exibe diretamente a imagem da galeria
-            img_tag = soup.find('img', class_=re.compile(r'ui-pdp-image|ui-pdp-gallery__figure__image'))
+            # Prioriza especificamente a imagem principal da galeria (evitando pegar miniaturas de variações ou ícones que também têm a classe ui-pdp-image)
+            img_tag = soup.find('img', class_=re.compile(r'ui-pdp-gallery__figure__image'))
+            if not img_tag:
+                for cand in soup.find_all('img', class_=re.compile(r'ui-pdp-image')):
+                    classes_cand = " ".join(cand.get('class', []))
+                    if 'thumbnail' not in classes_cand and 'icon' not in classes_cand:
+                        img_tag = cand
+                        break
+
             if img_tag:
                 url_img = img_tag.get('data-zoom') or img_tag.get('src')
                 if url_img and url_img.startswith("data:"):
                     url_img = img_tag.get('data-src') or None
 
+            if not url_img:
+                og_img = soup.find('meta', property='og:image')
+                if og_img:
+                    url_img = og_img.get('content')
+
             caminho_imagem = None
             if url_img:
-                # O SEGREDO: Troca qualquer letra isolada no final do link (ex: -V, -I, -W, -R) para -O (Original/Alta Resolução)
-                url_img = re.sub(r'-[a-zA-Z]\.(jpg|jpeg|png|webp)', r'-O.\1', url_img)
+                # Força o prefixo de alta definição (D_NQ_NP_2X_) e o sufixo -F (Full/Zoom) ou -O
+                url_img = re.sub(r'/D_Q_NP_(?:2X_)?', '/D_NQ_NP_2X_', url_img)
+                url_img = re.sub(r'/D_NQ_NP_(?!2X_)', '/D_NQ_NP_2X_', url_img)
+                url_img = re.sub(r'-[a-zA-Z](-[^/]+)?\.(jpg|jpeg|png|webp)$', r'-F\1.\2', url_img)
                 
-                print(f"   [Mercado Livre] URL da imagem forçada para Original: {url_img}")
+                print(f"   [Mercado Livre] URL da imagem forçada para Alta Resolução (2X Zoom): {url_img}")
                 caminho_imagem = self.baixar_imagem_temp(url_img)
 
             # --- 3. DESCRIÇÃO ---
