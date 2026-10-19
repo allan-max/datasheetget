@@ -3,59 +3,129 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 from bs4 import BeautifulSoup
+import requests
 import time
 import os
 import re
 from .base import BaseScraper
 
 class MercadoLivreScraper(BaseScraper):
-    def executar(self):
+    def montar_url_translate(self, url_original):
+        """
+        Converte a URL do Mercado Livre para o gateway do Google Translate (translate.goog).
+        Como a requisição ao Mercado Livre parte dos IPs reais do Google, o ML entrega
+        a página completa de SEO sem redirecionar para 'Olá! Para continuar, acesse sua conta'.
+        """
+        p = urlparse(url_original)
+        host = p.hostname or "www.mercadolivre.com.br"
+        path = p.path or "/"
+
+        # URLs curtas /p/MLB... sem slug fazem redirect 301 que o translate.goog barra via GET simples;
+        # adicionando um slug genérico antes de /p/MLB, o ML responde 200 direto com o HTML completo.
+        if re.match(r"^/p/MLB\d+", path, re.IGNORECASE):
+            path = "/produto" + path
+
+        host_tr = host.replace("-", "--").replace(".", "-") + ".translate.goog"
+        query_params = dict(parse_qsl(p.query))
+        query_params["_x_tr_sl"] = "auto"
+        query_params["_x_tr_tl"] = "pt"
+        query_params["_x_tr_hl"] = "pt-BR"
+
+        return urlunparse(("https", host_tr, path, p.params, urlencode(query_params), ""))
+
+    def carregar_html(self):
+        url_proxy = self.montar_url_translate(self.url)
+
+        # 1. Tentativa rápida via requests através do gateway do Google (leva ~2s e não abre navegador)
+        try:
+            print(f"   [Mercado Livre] Acessando via Gateway Google (sem login): {url_proxy}")
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            }
+            resp = requests.get(url_proxy, headers=headers, timeout=25)
+            if resp.status_code == 200 and "ui-pdp-title" in resp.text:
+                return resp.text
+            print(f"   [Mercado Livre] Aviso: Gateway via requests retornou status {resp.status_code}. Tentando via navegador...")
+        except Exception as e:
+            print(f"   [Mercado Livre] Aviso: Falha no requests ({e}). Tentando via navegador...")
+
+        # 2. Fallback via undetected_chromedriver (acessando o gateway translate.goog ou a URL original)
         driver = None
         try:
-            print(f"   [Mercado Livre] Iniciando Scraper (Tática Googlebot SEO + Imagem Alta Resolução)...")
+            for url_tentativa in (url_proxy, self.url):
+                options = uc.ChromeOptions()
+                options.page_load_strategy = 'eager'
+                options.add_argument("--no-first-run")
+                options.add_argument("--password-store=basic")
+                options.add_argument("--no-sandbox")
+                options.add_argument("--disable-dev-shm-usage")
+                options.add_argument("--disable-gpu")
+                options.add_argument("--window-size=1920,1080")
+
+                if driver is None:
+                    try:
+                        driver = uc.Chrome(options=options, version_main=109)
+                    except Exception:
+                        options = uc.ChromeOptions()
+                        options.page_load_strategy = 'eager'
+                        options.add_argument("--no-first-run")
+                        options.add_argument("--password-store=basic")
+                        options.add_argument("--no-sandbox")
+                        options.add_argument("--disable-dev-shm-usage")
+                        options.add_argument("--disable-gpu")
+                        options.add_argument("--window-size=1920,1080")
+                        driver = uc.Chrome(options=options)
+                    driver.set_window_size(1920, 1080)
+
+                print(f"   [Mercado Livre] Acessando no navegador: {url_tentativa}")
+                driver.get(url_tentativa)
+
+                try:
+                    WebDriverWait(driver, 15).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "h1.ui-pdp-title"))
+                    )
+                except Exception:
+                    pass
+
+                driver.execute_script("window.scrollTo(0, 800);")
+                time.sleep(2)
+
+                html = driver.page_source
+                if "ui-pdp-title" in html:
+                    return html
+            return driver.page_source if driver else ""
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+
+    def executar(self):
+        try:
+            print(f"   [Mercado Livre] Iniciando Scraper (Bypass Account Verification + Imagem Alta Resolução)...")
             
             if not hasattr(self, 'output_folder') or not self.output_folder: 
                 self.output_folder = "output"
             if not os.path.exists(self.output_folder): 
                 os.makedirs(self.output_folder)
 
-            options = uc.ChromeOptions()
-            options.page_load_strategy = 'eager'
-            options.add_argument("--no-first-run")
-            options.add_argument("--password-store=basic")
-            
-            options.add_argument("--user-agent=Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)")
-            
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-gpu")
-            options.add_argument("--window-size=1920,1080")
-            
-            driver = uc.Chrome(options=options, version_main=109)
-            driver.set_window_size(1920, 1080)
-
-            print(f"   [Mercado Livre] Acessando URL como Googlebot: {self.url}")
-            driver.get(self.url)
-
-            try:
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "h1.ui-pdp-title"))
-                )
-            except:
-                print("   [Mercado Livre] Aviso: Timeout esperando título. A extrair o que foi carregado...")
-
-            # 2. Scroll leve para garantir carregamento
-            driver.execute_script("window.scrollTo(0, 800);")
-            time.sleep(2)
-
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            html = self.carregar_html()
+            soup = BeautifulSoup(html or "", 'html.parser')
 
             # --- 1. TÍTULO ---
-            titulo = "Produto Mercado Livre"
             h1 = soup.find('h1', class_=re.compile(r'ui-pdp-title'))
-            if h1: titulo = self.limpar_texto(h1.get_text())
-            print(f"   ✅ Título capturado: {titulo}")
+            if not h1:
+                if "account-verification" in (html or "") or "acesse sua conta" in (html or "").lower():
+                    raise Exception("Mercado Livre bloqueou o acesso com tela de login (account-verification).")
+                raise Exception("Não foi possível localizar os dados do anúncio no Mercado Livre.")
+
+            titulo = self.limpar_texto(h1.get_text())
+            print(f"   [OK] Título capturado: {titulo}")
 
             # --- 2. IMAGEM (O TRUQUE DA ALTA RESOLUÇÃO) ---
             print("   [Mercado Livre] A extrair Imagem Gigante...")
@@ -65,10 +135,12 @@ class MercadoLivreScraper(BaseScraper):
             img_tag = soup.find('img', class_=re.compile(r'ui-pdp-image|ui-pdp-gallery__figure__image'))
             if img_tag:
                 url_img = img_tag.get('data-zoom') or img_tag.get('src')
+                if url_img and url_img.startswith("data:"):
+                    url_img = img_tag.get('data-src') or None
 
             caminho_imagem = None
             if url_img:
-                # O SEGREDO: Troca qualquer letra isolada no final do link (ex: -V, -I, -W) para -O (Original/Alta Resolução)
+                # O SEGREDO: Troca qualquer letra isolada no final do link (ex: -V, -I, -W, -R) para -O (Original/Alta Resolução)
                 url_img = re.sub(r'-[a-zA-Z]\.(jpg|jpeg|png|webp)', r'-O.\1', url_img)
                 
                 print(f"   [Mercado Livre] URL da imagem forçada para Original: {url_img}")
@@ -109,7 +181,7 @@ class MercadoLivreScraper(BaseScraper):
 
             if hasattr(self, 'filtrar_specs'):
                 specs = self.filtrar_specs(specs)
-            print(f"   ✅ Specs encontradas: {len(specs)} itens.")
+            print(f"   [OK] Specs encontradas: {len(specs)} itens.")
 
             # --- FINALIZAÇÃO E CORREÇÃO DE PDF ---
             # TRUQUE PARA O PDF: Forçar o caminho absoluto e inverter as barras para o padrão Web/PDF
@@ -137,12 +209,8 @@ class MercadoLivreScraper(BaseScraper):
             }
 
         except Exception as e:
-            print(f"   ❌ [ERRO MERCADO LIVRE] {e}")
+            print(f"   [ERRO MERCADO LIVRE] {e}")
             return {'sucesso': False, 'erro': str(e)}
-        finally:
-            if driver:
-                try: driver.quit()
-                except: pass
 
     def limpar_descricao_ml(self, texto_bruto):
         if not texto_bruto: return "Descrição indisponível."
