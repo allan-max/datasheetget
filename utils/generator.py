@@ -5,6 +5,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from fpdf import FPDF
 from PIL import Image
 import os
+from utils.logger import registrar_erro_modulo, registrar_log
 
 # --- CONFIGURAÇÃO ---
 LOGO_PATH = r"C:\Users\Administrator\Desktop\datasheetget\utils\ventura.png"
@@ -56,6 +57,7 @@ class DocGenerator:
             return True
         except Exception as e:
             print(f"   ⚠️ Erro PIL (Redimensionamento): {e}")
+            registrar_erro_modulo("GERADOR_DOCUMENTOS", f"Erro ao redimensionar imagem ({image_path}): {e}")
             return False
 
     def _adicionar_cabecalho_word(self, doc):
@@ -124,9 +126,11 @@ class DocGenerator:
                     row[1].text = str(v)
 
             doc.save(filepath)
+            registrar_log(f"Arquivo Word gerado com sucesso: {filepath}", nivel="INFO", modulo="GERADOR_DOCUMENTOS")
             return True
         except Exception as e:
             print(f"   [ERRO WORD] {e}")
+            registrar_erro_modulo("GERADOR_DOCUMENTOS", f"Erro ao gerar arquivo Word ({filepath}): {e}", titulo=data.get("titulo"))
             return False
 
     def create_pdf(self, data, filepath):
@@ -189,7 +193,9 @@ class DocGenerator:
                     pdf.ln(1)
 
             pdf.output(filepath)
+            registrar_log(f"Arquivo PDF gerado com sucesso: {filepath}", nivel="INFO", modulo="GERADOR_DOCUMENTOS")
             return True
         except Exception as e:
             print(f"   [ERRO PDF] {e}")
+            registrar_erro_modulo("GERADOR_DOCUMENTOS", f"Erro ao gerar arquivo PDF ({filepath}): {e}", titulo=data.get("titulo"))
             return False

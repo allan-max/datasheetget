@@ -1,13 +1,17 @@
 # utils/logger.py
+import logging
 import os
 import re
+import socket
 import sys
 import threading
+import traceback
 from datetime import datetime
 
 LOG_DIR_SERVIDOR = r"\\SERVIDOR2\Publico\ALLAN\Logs"
 LOG_FILE_NAME = "datasheet.txt"
 LOG_PATH_SERVIDOR = os.path.join(LOG_DIR_SERVIDOR, LOG_FILE_NAME)
+_DEFAULT_LOG_PATH_SERVIDOR = LOG_PATH_SERVIDOR
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_DIR_LOCAL = os.path.join(BASE_DIR, "logs")
@@ -17,6 +21,7 @@ _LOG_LOCK = threading.RLock()
 _ORIG_STDOUT = sys.__stdout__ or sys.stdout
 _ORIG_STDERR = sys.__stderr__ or sys.stderr
 _CAPTURA_ATIVA = False
+_CONTEXTO_THREAD = threading.local()
 
 _PADRAO_TIMESTAMP = re.compile(r"^\[\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}\]")
 
@@ -48,21 +53,47 @@ def obter_caminho_log():
     return LOG_PATH_SERVIDOR
 
 
+def definir_contexto_execucao(modulo=None, url=None, pedido_id=None):
+    """Define na thread atual qual módulo, URL e pedido estão em execução para enriquecer todos os logs."""
+    if modulo is not None:
+        _CONTEXTO_THREAD.modulo = modulo
+    if url is not None:
+        _CONTEXTO_THREAD.url = url
+    if pedido_id is not None:
+        _CONTEXTO_THREAD.pedido_id = pedido_id
+
+
+def limpar_contexto_execucao():
+    _CONTEXTO_THREAD.modulo = None
+    _CONTEXTO_THREAD.url = None
+    _CONTEXTO_THREAD.pedido_id = None
+
+
+def obter_contexto_execucao():
+    return (
+        getattr(_CONTEXTO_THREAD, "modulo", None),
+        getattr(_CONTEXTO_THREAD, "url", None),
+        getattr(_CONTEXTO_THREAD, "pedido_id", None),
+    )
+
+
 def _gravar_no_arquivo(texto):
-    if not texto:
+    if texto is None:
         return
     if not texto.endswith("\n"):
         texto += "\n"
     with _LOG_LOCK:
+        em_teste_unitario = ("unittest" in sys.modules) and (LOG_PATH_SERVIDOR == _DEFAULT_LOG_PATH_SERVIDOR)
         gravou_servidor = False
-        try:
-            os.makedirs(LOG_DIR_SERVIDOR, exist_ok=True)
-            with open(LOG_PATH_SERVIDOR, "a", encoding="utf-8", errors="replace") as f:
-                f.write(texto)
-                f.flush()
-            gravou_servidor = True
-        except Exception:
-            pass
+        if not em_teste_unitario:
+            try:
+                os.makedirs(LOG_DIR_SERVIDOR, exist_ok=True)
+                with open(LOG_PATH_SERVIDOR, "a", encoding="utf-8", errors="replace") as f:
+                    f.write(texto)
+                    f.flush()
+                gravou_servidor = True
+            except Exception:
+                pass
 
         if not gravou_servidor:
             try:
@@ -91,7 +122,7 @@ def _escrever_console(texto, erro=False):
 
 
 class TeeLogStream:
-    """Intercepta sys.stdout / sys.stderr para gravar tudo em tempo real no datasheet.txt."""
+    """Intercepta sys.stdout / sys.stderr para gravar toda a execução em tempo real no datasheet.txt."""
 
     def __init__(self, orig_stream, is_err=False):
         self.orig_stream = orig_stream
@@ -123,13 +154,16 @@ class TeeLogStream:
     def _registrar_linha_capturada(self, linha):
         linha_limpa = linha.rstrip("\r")
         if not linha_limpa.strip():
-            _gravar_no_arquivo("")
             return
         if _PADRAO_TIMESTAMP.match(linha_limpa.lstrip()):
             _gravar_no_arquivo(linha_limpa.lstrip())
-        else:
-            prefixo = "[STDERR] " if self.is_err else ""
-            _gravar_no_arquivo(f"[{_agora()}] {prefixo}{linha_limpa}")
+            return
+
+        mod_ctx, _, pedido_ctx = obter_contexto_execucao()
+        nivel = "STDERR" if self.is_err else "EXECUCAO"
+        mod_tag = f" [MÓDULO: {mod_ctx}]" if mod_ctx else ""
+        id_tag = f" [ID: {pedido_ctx}]" if pedido_ctx else ""
+        _gravar_no_arquivo(f"[{_agora()}] [{nivel}]{mod_tag}{id_tag} {linha_limpa.strip()}")
 
     def flush(self):
         buf = self._get_buffer()
@@ -162,7 +196,7 @@ class TeeLogStream:
 
 
 def ativar_captura_global():
-    """Ativa a captura de todos os prints e logs do Python para o datasheet.txt."""
+    """Ativa a captura de todos os prints, erros e logs do Python/Flask para o datasheet.txt."""
     global _CAPTURA_ATIVA, _ORIG_STDOUT, _ORIG_STDERR
     with _LOG_LOCK:
         if _CAPTURA_ATIVA:
@@ -173,6 +207,17 @@ def ativar_captura_global():
         if not isinstance(sys.stderr, TeeLogStream):
             _ORIG_STDERR = sys.stderr
             sys.stderr = TeeLogStream(_ORIG_STDERR, is_err=True)
+
+        # Redireciona handlers de logging já criados para o TeeLogStream
+        loggers = [logging.getLogger(), logging.getLogger("werkzeug")]
+        for lg in loggers:
+            for h in getattr(lg, "handlers", []):
+                if isinstance(h, logging.StreamHandler):
+                    if h.stream is _ORIG_STDOUT:
+                        h.stream = sys.stdout
+                    elif h.stream is _ORIG_STDERR:
+                        h.stream = sys.stderr
+
         _CAPTURA_ATIVA = True
 
 
@@ -195,29 +240,47 @@ def identificar_modulo_scraper(scraper=None, site_nome=None, modulo_nome=None, c
     return site_str
 
 
-def registrar_log(mensagem, nivel="INFO", modulo="SISTEMA"):
-    linha = f"[{_agora()}] [{nivel}] [MÓDULO: {modulo}] {mensagem}"
+def registrar_log(mensagem, nivel="INFO", modulo=None):
+    mod_ctx, _, pedido_ctx = obter_contexto_execucao()
+    mod_final = modulo or mod_ctx or "SISTEMA"
+    id_tag = f" [ID: {pedido_ctx}]" if pedido_ctx else ""
+    linha = f"[{_agora()}] [{nivel}] [MÓDULO: {mod_final}]{id_tag} {mensagem}"
     _gravar_no_arquivo(linha)
     _escrever_console(linha + "\n", erro=(nivel in ("ERRO", "CRITICO", "ERRO DO MODULO")))
 
 
+def registrar_separador(caractere="=", tamanho=80):
+    linha = f"[{_agora()}] {caractere * tamanho}"
+    _gravar_no_arquivo(linha)
+    _escrever_console(linha + "\n")
+
+
 def registrar_modulo_ligado(site_nome, modulo_nome, classe_nome, url, detalhe=None):
     mod_id = identificar_modulo_scraper(site_nome=site_nome, modulo_nome=modulo_nome, classe_nome=classe_nome)
+    definir_contexto_execucao(modulo=mod_id, url=url)
     extra = f" | Detalhe: {detalhe}" if detalhe else ""
-    msg = f"Módulo ligado: {mod_id} acionado para processar a URL: {url}{extra}"
+    msg = f"Módulo ligado: {mod_id} foi acionado para processar a URL: {url}{extra}"
     registrar_log(msg, nivel="MODULO LIGADO", modulo=mod_id)
 
 
-def registrar_erro_modulo(modulo, descricao_problema, url=None, titulo=None):
+def registrar_erro_modulo(modulo, descricao_problema, url=None, titulo=None, incluir_traceback=False):
+    mod_ctx, url_ctx, _ = obter_contexto_execucao()
+    mod_final = modulo or mod_ctx or "DESCONHECIDO"
+    url_final = url or url_ctx
     partes = [
-        f"Módulo que apresentou problema: {modulo}",
+        f"Módulo que apresentou problema: {mod_final}",
         f"Descrição do problema: {descricao_problema}",
     ]
     if titulo:
         partes.append(f"Título do item: {titulo}")
-    if url:
-        partes.append(f"URL: {url}")
-    registrar_log(" | ".join(partes), nivel="ERRO DO MODULO", modulo=modulo)
+    if url_final:
+        partes.append(f"URL: {url_final}")
+    registrar_log(" | ".join(partes), nivel="ERRO DO MODULO", modulo=mod_final)
+    if incluir_traceback:
+        tb = traceback.format_exc()
+        if tb and "NoneType: None" not in tb:
+            for linha_tb in tb.strip().splitlines():
+                registrar_log(f"   [TRACEBACK] {linha_tb}", nivel="ERRO DO MODULO", modulo=mod_final)
 
 
 def descricao_esta_ausente(descricao):
@@ -278,10 +341,9 @@ def specs_estao_ausentes(specs):
 
 def validar_e_reportar_dados_item(dados, scraper=None, modulo=None, url=None):
     """
-    Verifica se o item extraído pelo módulo veio sem imagem, sem descrição,
-    sem título ou sem ficha técnica, e grava no log datasheet.txt qual módulo
-    apresentou o problema e a descrição detalhada do que ocorreu.
-    Retorna lista de descrições dos problemas detectados.
+    Inspeciona todos os dados extraídos do item e registra no log datasheet.txt
+    todos os detalhes (título, imagem, descrição, ficha técnica) e qualquer erro
+    ou ausência de dados, informando o módulo responsável e a descrição do problema.
     """
     mod_id = modulo or identificar_modulo_scraper(scraper=scraper)
     url_item = url or getattr(scraper, "url", None) or "URL não informada"
@@ -291,6 +353,8 @@ def validar_e_reportar_dados_item(dados, scraper=None, modulo=None, url=None):
     descricao = dados.get("descricao")
     specs = dados.get("caracteristicas")
     caminho_imagem = dados.get("caminho_imagem_temp")
+
+    registrar_log(f"Iniciando validação detalhada dos dados extraídos do item | URL: {url_item}", nivel="VALIDACAO", modulo=mod_id)
 
     problemas = []
 
@@ -310,7 +374,16 @@ def validar_e_reportar_dados_item(dados, scraper=None, modulo=None, url=None):
         problemas.append(desc_prob)
         registrar_erro_modulo(mod_id, desc_prob, url=url_item, titulo=titulo)
     else:
-        registrar_log(f"Imagem extraída e validada com sucesso ({caminho_imagem}).", nivel="INFO", modulo=mod_id)
+        tamanho_kb = 0.0
+        try:
+            tamanho_kb = os.path.getsize(caminho_imagem) / 1024.0
+        except Exception:
+            pass
+        registrar_log(
+            f"Imagem extraída e validada com sucesso: '{caminho_imagem}' ({tamanho_kb:.1f} KB).",
+            nivel="INFO",
+            modulo=mod_id,
+        )
 
     # 3. Validação de Descrição
     sem_desc, motivo_desc = descricao_esta_ausente(descricao)
@@ -319,8 +392,14 @@ def validar_e_reportar_dados_item(dados, scraper=None, modulo=None, url=None):
         problemas.append(desc_prob)
         registrar_erro_modulo(mod_id, desc_prob, url=url_item, titulo=titulo)
     else:
-        tam_desc = len(str(descricao).strip())
-        registrar_log(f"Descrição extraída com sucesso ({tam_desc} caracteres).", nivel="INFO", modulo=mod_id)
+        texto_desc = str(descricao).strip()
+        tam_desc = len(texto_desc)
+        previa = re.sub(r"\s+", " ", texto_desc)[:180]
+        registrar_log(
+            f"Descrição extraída com sucesso ({tam_desc} caracteres) | Prévia: \"{previa}...\"",
+            nivel="INFO",
+            modulo=mod_id,
+        )
 
     # 4. Validação de Ficha Técnica (Características)
     sem_specs, motivo_specs = specs_estao_ausentes(specs)
@@ -329,7 +408,31 @@ def validar_e_reportar_dados_item(dados, scraper=None, modulo=None, url=None):
         problemas.append(desc_prob)
         registrar_erro_modulo(mod_id, desc_prob, url=url_item, titulo=titulo)
     else:
-        qtd_specs = len(specs) if hasattr(specs, "__len__") else 1
-        registrar_log(f"Ficha técnica extraída com sucesso ({qtd_specs} características).", nivel="INFO", modulo=mod_id)
+        itens_lista = list(specs.items()) if isinstance(specs, dict) else list(specs)
+        qtd_specs = len(itens_lista)
+        resumo_specs = ", ".join(f"{k}: {str(v)[:40]}" for k, v in itens_lista[:8])
+        registrar_log(
+            f"Ficha técnica extraída com sucesso ({qtd_specs} características) | Amostra: [{resumo_specs}]",
+            nivel="INFO",
+            modulo=mod_id,
+        )
+
+    if problemas:
+        registrar_log(
+            f"Validação finalizada com {len(problemas)} problema(s) detectado(s) no módulo {mod_id}: {'; '.join(problemas)}",
+            nivel="AVISO",
+            modulo=mod_id,
+        )
+    else:
+        registrar_log(
+            f"Validação finalizada: todos os dados do item (título, imagem, descrição e ficha técnica) estão completos.",
+            nivel="INFO",
+            modulo=mod_id,
+        )
 
     return problemas
+
+
+# Ativa automaticamente a captura global ao importar o módulo (fora de testes unitários)
+if "unittest" not in sys.modules:
+    ativar_captura_global()

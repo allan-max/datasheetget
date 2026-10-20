@@ -5,10 +5,20 @@ import uuid
 import os
 import logging
 import sys
+import time
 import requests
 import json
 from datetime import datetime
 from scraper_manager import ScraperManager
+from utils.logger import (
+    ativar_captura_global,
+    definir_contexto_execucao,
+    limpar_contexto_execucao,
+    obter_caminho_log,
+    registrar_erro_modulo,
+    registrar_log,
+    registrar_separador,
+)
 
 # --- FORÇAR EXIBIÇÃO DE LOGS NO TERMINAL ---
 os.environ["PYTHONUNBUFFERED"] = "1" 
@@ -19,6 +29,9 @@ try:
     sys.stderr.reconfigure(encoding='utf-8')
 except:
     pass
+
+# Ativa a gravação contínua de tudo no arquivo \\SERVIDOR2\Publico\ALLAN\Logs\datasheet.txt
+ativar_captura_global()
 
 # --- CONFIGURAÇÃO DO NOVO SISTEMA DE LOGS ---
 logging.basicConfig(
@@ -43,8 +56,11 @@ else:
     OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-logger.info("ROBO INICIADO!!!!!!!!!!!!")
-logger.info(f"📁 ARQUIVOS SERÃO SALVOS EM: {OUTPUT_DIR}")
+registrar_separador("=")
+registrar_log("ROBO DATASHEET INICIADO!", nivel="INFO", modulo="SISTEMA")
+registrar_log(f"ARQUIVOS DE DATASHEET SERÃO SALVOS EM: {OUTPUT_DIR}", nivel="INFO", modulo="SISTEMA")
+registrar_log(f"ARQUIVO DE LOG ATIVO EM TEMPO REAL: {obter_caminho_log()}", nivel="INFO", modulo="SISTEMA")
+registrar_separador("=")
 
 URL_CALLBACK_API_NOVA = "http://127.0.0.1:3000/api/datasheet/webhook"
 
@@ -54,21 +70,22 @@ scraper_manager = ScraperManager()
 pedidos = {}
 
 def processar_pedido_background(request_id_interno, url, webhook_url, origem="PADRAO", codigo_tarefa_externo=None, custom_id=None):
+    inicio_pedido = time.time()
+    id_final_para_bot = custom_id or codigo_tarefa_externo or request_id_interno
+    definir_contexto_execucao(modulo="API", url=url, pedido_id=id_final_para_bot)
     try:
         pasta_pedido = OUTPUT_DIR 
-        
-        logger.info(f"🔧 [PROCESSANDO] UUID Interno: {request_id_interno}")
-        
-        # Define qual ID será enviado de volta.
-        # Se o bot mandou um custom_id, usamos ele como PRINCIPAL.
-        # Se não mandou, usamos o UUID interno gerado pelo Python.
-        id_final_para_bot = custom_id if custom_id else request_id_interno
 
-        if custom_id:
-            logger.info(f"   🔖 ID DO CLIENTE: {custom_id}")
+        registrar_separador("-")
+        registrar_log(
+            f"INÍCIO DE EXECUÇÃO DO PEDIDO | ID: {id_final_para_bot} | UUID Interno: {request_id_interno} | Origem: {origem} | URL: {url}",
+            nivel="INFO",
+            modulo="API",
+        )
         
         # Executa o Scraper
         resultado = scraper_manager.executar_scraping(url, pasta_pedido)
+        duracao_total = time.time() - inicio_pedido
         
         base_url = "http://localhost:6004"
         files = resultado.get('arquivos', {})
@@ -79,7 +96,11 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
         payload_final = {}
 
         if resultado.get('sucesso'):
-            logger.info("   ✅ Sucesso! Preparando webhook...")
+            registrar_log(
+                f"Datasheet finalizado em {duracao_total:.2f}s para o pedido {id_final_para_bot} | PDF: {link_pdf} | Word: {link_word}",
+                nivel="SUCESSO",
+                modulo="API",
+            )
 
             if origem == "API_NOVA":
                 payload_final = {
@@ -109,7 +130,7 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
                 }
         else:
             msg_erro = resultado.get('erro', 'Erro desconhecido')
-            logger.error(f"   ❌ Falha: {msg_erro}")
+            registrar_erro_modulo("API", f"Pedido {id_final_para_bot} falhou após {duracao_total:.2f}s: {msg_erro}", url=url)
 
             if origem == "API_NOVA":
                 payload_final = {
@@ -135,31 +156,46 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
 
         # --- ENVIO DO WEBHOOK ---
         if webhook_url:
-            logger.info(f"   📤 Enviando para Webhook: {webhook_url}")
+            registrar_log(
+                f"Enviando retorno para Webhook: {webhook_url} | Payload: {json.dumps(payload_final, ensure_ascii=False)}",
+                nivel="INFO",
+                modulo="WEBHOOK",
+            )
             try:
-                requests.post(webhook_url, json=payload_final, timeout=10)
+                resp_wh = requests.post(webhook_url, json=payload_final, timeout=10)
+                registrar_log(f"Webhook respondeu HTTP {resp_wh.status_code} para ID {id_final_para_bot}", nivel="INFO", modulo="WEBHOOK")
             except Exception as e:
-                logger.error(f"   ❌ Erro ao chamar Webhook: {e}")
+                registrar_erro_modulo("WEBHOOK", f"Erro ao enviar callback para Webhook ({webhook_url}): {e}", url=url)
+
+        registrar_log(
+            f"FIM DE EXECUÇÃO DO PEDIDO {id_final_para_bot} | Status: {pedidos[request_id_interno]['status'].upper()} | Tempo Total: {duracao_total:.2f}s",
+            nivel="INFO",
+            modulo="API",
+        )
+        registrar_separador("-")
 
     except Exception as e:
-        logger.exception(f"   💥 Erro Crítico na Thread: {str(e)}")
+        registrar_erro_modulo("API_THREAD", f"Erro crítico na thread de processamento: {str(e)}", url=url, incluir_traceback=True)
         pedidos[request_id_interno]['status'] = 'erro_critico'
+    finally:
+        limpar_contexto_execucao()
 
 # --- ROTAS DA API ---
 
 @app.route('/api/datasheet/processar', methods=['POST'])
 def iniciar_scraping():
-    logger.info(">>> [DEBUG] RECEBI UM PEDIDO AGORA! <<<")
+    ip_cliente = request.remote_addr or "desconhecido"
+    registrar_log(f"Nova requisição HTTP POST recebida em /api/datasheet/processar (IP: {ip_cliente})", nivel="INFO", modulo="API")
     
     # force=True ignora caso o bot do Node.js esqueça o header Content-Type
     # silent=True evita que o Flask quebre a aplicação se o JSON vier malformado
     dados = request.get_json(silent=True, force=True)
     
     if not dados:
-        logger.error("[ERRO] O Bot não enviou dados ou o JSON está quebrado!")
+        registrar_erro_modulo("API", f"Requisição de {ip_cliente} recebida sem corpo JSON ou com JSON inválido.")
         return jsonify({"error": "Nenhuma URL fornecida ou JSON inválido"}), 400
 
-    logger.info(f"📦 [DADOS RECEBIDOS]: {dados}")
+    registrar_log(f"Payload completo recebido na API: {json.dumps(dados, ensure_ascii=False)}", nivel="INFO", modulo="API")
     
     lista_processamento = [] 
     
@@ -207,7 +243,7 @@ def iniciar_scraping():
             })
 
     if not lista_processamento:
-        logger.error("[ERRO] JSON recebido, mas não achei nenhuma URL nele.")
+        registrar_erro_modulo("API", f"JSON recebido sem nenhuma URL válida: {dados}")
         return jsonify({"error": "Nenhuma URL fornecida no corpo da requisição"}), 400
 
     ids_gerados = []
@@ -259,8 +295,10 @@ def verificar_status(request_id):
 @app.route('/download/<path:filename>', methods=['GET'])
 def download_arquivo(filename):
     try:
+        registrar_log(f"Download solicitado do arquivo: {filename}", nivel="INFO", modulo="API_DOWNLOAD")
         return send_from_directory(OUTPUT_DIR, filename, as_attachment=True)
     except FileNotFoundError:
+        registrar_erro_modulo("API_DOWNLOAD", f"Arquivo solicitado para download não encontrado: {filename}")
         return jsonify({"error": "Arquivo não encontrado"}), 404
 
 @app.route('/health', methods=['GET'])
@@ -268,12 +306,13 @@ def health_check():
     return jsonify({
         "status": "online",
         "pasta": OUTPUT_DIR,
+        "log_file": obter_caminho_log(),
         "pedidos_ativos": sum(1 for p in pedidos.values() if p['status'] == 'processando')
     })
 
 if __name__ == '__main__':
-    logger.info("="*60)
-    logger.info("🚀 API V7 - UNIVERSAL ID RESPONSE")
-    logger.info("   O Bot receberá o ID em: 'request_id', 'custom_id', 'id'")
-    logger.info("="*60)
+    registrar_separador("=")
+    registrar_log("API V7 - UNIVERSAL ID RESPONSE INICIADA NA PORTA 6004", nivel="INFO", modulo="SISTEMA")
+    registrar_log(f"Monitoramento e logs salvando continuamente em: {obter_caminho_log()}", nivel="INFO", modulo="SISTEMA")
+    registrar_separador("=")
     app.run(host='0.0.0.0', port=6004, threaded=True, debug=False)

@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 from PIL import Image
 
 from .base import BaseScraper
+from utils.logger import identificar_modulo_scraper, registrar_erro_modulo, registrar_log
 
 
 CHROME_VAGAS = threading.Semaphore(1)
@@ -403,16 +404,28 @@ class UniversalScraper(BaseScraper):
         return None
 
     def baixar_imagem(self, url, session):
+        mod_id = identificar_modulo_scraper(scraper=self)
         if getattr(self, "_foto_navegador", None):
             return self._foto_navegador
         if not url:
+            registrar_erro_modulo(mod_id, "Nenhuma URL de imagem encontrada na página do produto.", url=self.url)
             return None
         try:
             res = self.pedir(url, session)
             if res.status_code != 200 or len(res.content) > 12000000:
+                registrar_erro_modulo(
+                    mod_id,
+                    f"Falha ao baixar imagem do item (HTTP {res.status_code}, tamanho={len(res.content)} bytes) em: {url}",
+                    url=self.url,
+                )
                 return None
             img = Image.open(BytesIO(res.content)).convert("RGBA")
             if img.width < 300 or img.height < 300:
+                registrar_erro_modulo(
+                    mod_id,
+                    f"Imagem do produto descartada por resolução muito baixa ({img.width}x{img.height}px < 300x300px): {url}",
+                    url=self.url,
+                )
                 return None
             fundo = Image.new("RGB", img.size, "white")
             fundo.paste(img, mask=img.getchannel("A"))
@@ -421,9 +434,15 @@ class UniversalScraper(BaseScraper):
             return caminho
         except (requests.RequestException, ValueError, OSError) as e:
             print("   [Universal] Imagem indisponivel: " + type(e).__name__)
+            registrar_erro_modulo(
+                mod_id,
+                f"Imagem do produto indisponível ({type(e).__name__}: {e}) ao acessar: {url}",
+                url=self.url,
+            )
             return None
 
     def executar(self):
+        mod_id = identificar_modulo_scraper(scraper=self)
         dominio = urlparse(self.url).hostname or "url-invalida"
         html, imagem_temp = "", None
         try:
@@ -472,15 +491,23 @@ class UniversalScraper(BaseScraper):
                     raise ValueError("Pagina bloqueada ou desafio anti-bot")
                 titulo = self.normalizar(self.limpar_texto(titulo))
                 if not titulo or any(x in titulo.lower() for x in TITULOS_INVALIDOS):
+                    registrar_erro_modulo(mod_id, f"Item veio SEM TÍTULO ou com título inválido ('{titulo}').", url=self.url)
                     raise ValueError("Titulo de produto ausente ou invalido")
                 specs = self.filtrar_specs(specs)
                 if len(descricao) < 80 and len(specs) < 3:
+                    if not descricao or not str(descricao).strip():
+                        registrar_erro_modulo(mod_id, "Item veio SEM DESCRIÇÃO (descrição vazia na página).", url=self.url, titulo=titulo)
+                    else:
+                        registrar_erro_modulo(mod_id, f"Item veio com descrição muito curta ({len(descricao)} caracteres).", url=self.url, titulo=titulo)
+                    registrar_erro_modulo(mod_id, f"Item veio com ficha técnica insuficiente ({len(specs)} especificações).", url=self.url, titulo=titulo)
                     raise ValueError("Descricao curta e menos de 3 especificacoes")
                 if not veio_api and not self.produto_jsonld(BeautifulSoup(html, "html.parser")):
                     sinais = re.search(r"add.to.cart|addtocart|itemprop=['\"]price|product:price|woocommerce-product", html, re.I)
                     if not sinais and len(specs) < 3:
                         raise ValueError("Pagina sem sinais suficientes de produto")
                 imagem_temp = self.baixar_imagem(urljoin(url, imagem), session) if imagem else None
+                if not imagem:
+                    registrar_erro_modulo(mod_id, "Item veio SEM IMAGEM (nenhuma imagem encontrada no HTML/JSON-LD da página).", url=self.url, titulo=titulo)
                 if self.exigir_imagem and not imagem_temp:
                     raise ValueError("Imagem do produto indisponivel")
                 dados = {"titulo": titulo, "descricao": self.normalizar(descricao),
@@ -496,4 +523,5 @@ class UniversalScraper(BaseScraper):
             self.guardar_falha(html, dominio)
             mensagem = self.normalizar(str(e))
             print("   [Universal] Erro: " + mensagem)
+            registrar_erro_modulo(mod_id, f"{mensagem} (domínio: {dominio})", url=self.url)
             return {"sucesso": False, "erro": "Universal: %s (%s)" % (mensagem, dominio)}

@@ -1,8 +1,9 @@
-﻿import os
+import os
 import sys
 import re
 import uuid
 import json
+import time
 import threading
 import requests
 import importlib
@@ -11,6 +12,21 @@ from urllib.parse import urlparse
 from datetime import datetime
 from io import BytesIO
 from flask import Flask, request, jsonify, send_from_directory
+
+# Garante que o Python veja a pasta atual para importar 'scrapers' e 'utils'
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from utils.logger import (
+    ativar_captura_global,
+    definir_contexto_execucao,
+    identificar_modulo_scraper,
+    limpar_contexto_execucao,
+    obter_caminho_log,
+    registrar_erro_modulo,
+    registrar_log,
+    registrar_modulo_ligado,
+    registrar_separador,
+)
 
 # --- CONFIGURAÇÕES DE AMBIENTE (Antigo run.py) ---
 os.environ["PYTHONUNBUFFERED"] = "1" 
@@ -21,6 +37,9 @@ try:
     sys.stderr.reconfigure(encoding='utf-8')
 except:
     pass
+
+# Ativa a gravação em tempo real de tudo para \\SERVIDOR2\Publico\ALLAN\Logs\datasheet.txt
+ativar_captura_global()
 
 # --- DEPENDÊNCIAS DE TERCEIROS ---
 # Certifique-se de ter instalado: pip install flask requests python-docx fpdf pillow
@@ -58,10 +77,10 @@ SITES_CONFIG = {
 }
 
 def identificar_site(url):
-    for site_nome, config in SITES_CONFIG.items():
-        for padrao in config['padroes_url']:
+    for site_nome, cfg in SITES_CONFIG.items():
+        for padrao in cfg['padroes_url']:
             if re.search(padrao, url, re.IGNORECASE):
-                return site_nome, config['modulo'], config['classe']
+                return site_nome, cfg['modulo'], cfg['classe']
     return None, None, None
 
 # ==============================================================================
@@ -87,6 +106,7 @@ class DocGenerator:
             return True
         except Exception as e:
             print(f"   ⚠️ Erro PIL: {e}", flush=True)
+            registrar_erro_modulo("GERADOR_DOCUMENTOS", f"Erro PIL ao redimensionar imagem ({image_path}): {e}")
             return False
 
     def create_word(self, data, filepath):
@@ -118,9 +138,11 @@ class DocGenerator:
                     row[0].text = str(k)
                     row[1].text = str(v)
             doc.save(filepath)
+            registrar_log(f"Arquivo Word gerado com sucesso: {filepath}", nivel="INFO", modulo="GERADOR_DOCUMENTOS")
             return True
         except Exception as e:
             print(f"   [ERRO WORD] {e}", flush=True)
+            registrar_erro_modulo("GERADOR_DOCUMENTOS", f"Erro ao gerar arquivo Word ({filepath}): {e}", titulo=data.get("titulo"))
             return False
 
     def create_pdf(self, data, filepath):
@@ -161,9 +183,11 @@ class DocGenerator:
                     pdf.set_font("Helvetica", '', 9)
                     pdf.multi_cell(0, 5, txt(str(v)), border='B')
             pdf.output(filepath)
+            registrar_log(f"Arquivo PDF gerado com sucesso: {filepath}", nivel="INFO", modulo="GERADOR_DOCUMENTOS")
             return True
         except Exception as e:
             print(f"   [ERRO PDF] {e}", flush=True)
+            registrar_erro_modulo("GERADOR_DOCUMENTOS", f"Erro ao gerar arquivo PDF ({filepath}): {e}", titulo=data.get("titulo"))
             return False
 
 # ==============================================================================
@@ -173,48 +197,104 @@ class DocGenerator:
 app = Flask(__name__)
 pedidos = {}
 
-# Garante que o Python veja a pasta 'scrapers' para importar o base e os outros
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 class ScraperManager:
     def executar_scraping(self, url, pasta_pedido):
+        site_nome, modulo_nome, classe_nome = None, None, None
+        inicio = time.time()
         try:
+            definir_contexto_execucao(modulo="GERENCIADOR", url=url)
+            registrar_log(f"Analisando URL recebida para seleção de módulo: {url}", nivel="INFO", modulo="GERENCIADOR")
             dominio_bloqueado = config.site_bloqueado(url)
             if dominio_bloqueado:
-                return {'sucesso': False, 'erro': 'Site bloqueado para datasheet: ' + dominio_bloqueado}
+                msg_bloq = 'Site bloqueado para datasheet: ' + dominio_bloqueado
+                registrar_erro_modulo("GERENCIADOR", msg_bloq, url=url)
+                return {'sucesso': False, 'erro': msg_bloq}
             site_nome, modulo_nome, classe_nome = identificar_site(url)
             if not site_nome:
                 # O cadastro completo fica em config.py; esta copia tem poucos sites.
                 site_nome, modulo_nome, classe_nome = config.identificar_site(url)
             if not site_nome:
                 if not config.UNIVERSAL_ATIVO:
-                    return {'sucesso': False, 'erro': 'Site não configurado'}
+                    msg_nao_cfg = 'Site não configurado'
+                    registrar_erro_modulo("GERENCIADOR", msg_nao_cfg, url=url)
+                    return {'sucesso': False, 'erro': msg_nao_cfg}
                 site_nome, modulo_nome, classe_nome = 'UNIVERSAL', 'universal', 'UniversalScraper'
                 dominio = (urlparse(url).hostname or "URL invalida").encode("ascii", "backslashreplace").decode("ascii")
                 print(f"   --> Iniciando scraper: UNIVERSAL (site sem adapter: {dominio})", flush=True)
+                registrar_modulo_ligado(site_nome, modulo_nome, classe_nome, url, detalhe=f"Site sem módulo específico ({dominio})")
+            else:
+                registrar_modulo_ligado(site_nome, modulo_nome, classe_nome, url)
             
+            mod_id = identificar_modulo_scraper(site_nome=site_nome, modulo_nome=modulo_nome, classe_nome=classe_nome)
+            definir_contexto_execucao(modulo=mod_id, url=url)
             # Importa dinamicamente da pasta /scrapers
             modulo = importlib.import_module(f"scrapers.{modulo_nome}")
             ClasseScraper = getattr(modulo, classe_nome)
             
             scraper = ClasseScraper(url)
             scraper.output_folder = pasta_pedido
+            scraper.site_nome = site_nome
+            scraper.modulo_nome = modulo_nome
+            registrar_log(f"Iniciando execução de '{classe_nome}.executar()' | Pasta destino: {pasta_pedido}", nivel="EXECUCAO", modulo=mod_id)
             if site_nome == 'UNIVERSAL':
                 print("   [ROBO] Iniciando: UNIVERSAL", flush=True)
             else:
                 print(f"   [ROBO] Iniciando: {site_nome}", flush=True)
-            return scraper.executar()
+            resultado = scraper.executar()
+            duracao = time.time() - inicio
+
+            if isinstance(resultado, dict):
+                if resultado.get('sucesso'):
+                    problemas = getattr(scraper, 'problemas_detectados', [])
+                    arqs = resultado.get('arquivos', {}) or {}
+                    info_arqs = f"Word={arqs.get('word_nome', 'N/A')} | PDF={arqs.get('pdf_nome', 'N/A')}"
+                    if problemas:
+                        registrar_log(
+                            f"Execução concluída em {duracao:.2f}s COM PROBLEMAS NOS DADOS DO ITEM: {'; '.join(problemas)} | {info_arqs} | URL: {url}",
+                            nivel="AVISO",
+                            modulo=mod_id,
+                        )
+                    else:
+                        registrar_log(
+                            f"Execução concluída com SUCESSO COMPLETO em {duracao:.2f}s | {info_arqs} | URL: {url}",
+                            nivel="SUCESSO",
+                            modulo=mod_id,
+                        )
+                else:
+                    erro_msg = resultado.get('erro', 'Erro desconhecido')
+                    registrar_erro_modulo(
+                        mod_id,
+                        f"Falha na execução do módulo após {duracao:.2f}s: {erro_msg}",
+                        url=url,
+                    )
+            return resultado
         except Exception as e:
+            duracao = time.time() - inicio
+            mod_id = identificar_modulo_scraper(site_nome=site_nome, modulo_nome=modulo_nome, classe_nome=classe_nome)
+            registrar_erro_modulo(
+                mod_id,
+                f"Exceção crítica no módulo após {duracao:.2f}s: {e}",
+                url=url,
+                incluir_traceback=True,
+            )
             return {'sucesso': False, 'erro': str(e)}
 
 scraper_manager = ScraperManager()
 
 def processar_pedido_background(request_id_interno, url, webhook_url, origem, codigo_tarefa, custom_id):
+    inicio_pedido = time.time()
+    id_bot = custom_id or codigo_tarefa or request_id_interno
+    definir_contexto_execucao(modulo="API", url=url, pedido_id=id_bot)
     try:
-        id_bot = custom_id if custom_id else request_id_interno
-        print(f" ⚙️ [THREAD] Processando ID: {id_bot}", flush=True)
+        registrar_separador("-")
+        registrar_log(
+            f"INÍCIO DE EXECUÇÃO DO PEDIDO | ID: {id_bot} | UUID Interno: {request_id_interno} | Código Tarefa: {codigo_tarefa} | URL: {url}",
+            nivel="INFO",
+            modulo="API",
+        )
         
         resultado = scraper_manager.executar_scraping(url, OUTPUT_DIR)
+        duracao_total = time.time() - inicio_pedido
         
         base_url = "http://localhost:6004"
         files = resultado.get('arquivos', {})
@@ -222,35 +302,66 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem, co
         link_pdf = f"{base_url}/download/{files.get('pdf_nome')}" if files.get('pdf_nome') else None
 
         if resultado.get('sucesso'):
-            print(f" ✅ [SUCESSO] Arquivos gerados para {id_bot}", flush=True)
+            registrar_log(
+                f"Arquivos gerados com sucesso em {duracao_total:.2f}s para ID {id_bot} | PDF: {link_pdf} | Word: {link_word}",
+                nivel="SUCESSO",
+                modulo="API",
+            )
             payload = {
                 "status": "CONCLUIDO", "sucesso": True, "request_id": id_bot,
                 "codigoTarefa": codigo_tarefa,
                 "download": {"pdf": link_pdf, "word": link_word}
             }
         else:
-            payload = {"status": "ERRO", "sucesso": False, "request_id": id_bot, "erro": resultado.get('erro')}
+            erro_msg = resultado.get('erro', 'Erro desconhecido')
+            registrar_erro_modulo("API", f"Falha ao processar pedido {id_bot} após {duracao_total:.2f}s: {erro_msg}", url=url)
+            payload = {"status": "ERRO", "sucesso": False, "request_id": id_bot, "erro": erro_msg}
 
         pedidos[request_id_interno]['resultado'] = payload
         pedidos[request_id_interno]['status'] = 'concluido' if resultado.get('sucesso') else 'erro'
 
         if webhook_url:
-            requests.post(webhook_url, json=payload, timeout=10)
+            registrar_log(
+                f"Enviando callback para Webhook: {webhook_url} | Payload: {json.dumps(payload, ensure_ascii=False)}",
+                nivel="INFO",
+                modulo="WEBHOOK",
+            )
+            try:
+                resp_wh = requests.post(webhook_url, json=payload, timeout=10)
+                registrar_log(f"Webhook respondeu HTTP {resp_wh.status_code} para ID {id_bot}", nivel="INFO", modulo="WEBHOOK")
+            except Exception as wh_err:
+                registrar_erro_modulo("WEBHOOK", f"Erro ao enviar callback para Webhook ({webhook_url}): {wh_err}", url=url)
+
+        registrar_log(
+            f"FIM DE EXECUÇÃO DO PEDIDO {id_bot} | Status: {pedidos[request_id_interno]['status'].upper()} | Tempo Total: {duracao_total:.2f}s",
+            nivel="INFO",
+            modulo="API",
+        )
+        registrar_separador("-")
     except Exception as e:
-        print(f" 💥 [CRÍTICO] {e}", flush=True)
+        registrar_erro_modulo("API_THREAD", f"Erro crítico no processamento em background: {e}", url=url, incluir_traceback=True)
+    finally:
+        limpar_contexto_execucao()
 
 @app.route('/api/datasheet/processar', methods=['POST'])
 def iniciar():
-    print("\n >>> [REQUISIÇÃO RECEBIDA] <<<", flush=True)
+    ip_cliente = request.remote_addr or "desconhecido"
+    registrar_log(f"Nova requisição HTTP POST recebida em /api/datasheet/processar (IP: {ip_cliente})", nivel="INFO", modulo="API")
     dados = request.get_json(silent=True, force=True)
-    if not dados: return jsonify({"error": "JSON inválido"}), 400
+    if not dados:
+        registrar_erro_modulo("API", f"Requisição de {ip_cliente} recebida com JSON inválido ou vazio.")
+        return jsonify({"error": "JSON inválido"}), 400
+
+    registrar_log(f"Payload completo recebido: {json.dumps(dados, ensure_ascii=False)}", nivel="INFO", modulo="API")
 
     url = dados.get('url') or (dados.get('dados', {}).get('url') if 'dados' in dados else None)
     webhook = dados.get('webhook_url') or (dados.get('dados', {}).get('webhook_url') if 'dados' in dados else URL_CALLBACK_PADRAO)
     c_tarefa = dados.get('codigoTarefa')
     c_id = dados.get('custom_id') or dados.get('id')
 
-    if not url: return jsonify({"error": "URL faltando"}), 400
+    if not url:
+        registrar_erro_modulo("API", f"Requisição recebida sem URL: {dados}")
+        return jsonify({"error": "URL faltando"}), 400
 
     req_id = str(uuid.uuid4())
     pedidos[req_id] = {'status': 'processando'}
@@ -263,16 +374,18 @@ def iniciar():
 
 @app.route('/download/<path:filename>')
 def download(filename):
+    registrar_log(f"Download solicitado do arquivo: {filename}", nivel="INFO", modulo="API_DOWNLOAD")
     return send_from_directory(OUTPUT_DIR, filename, as_attachment=True)
 
 @app.route('/health')
 def health():
-    return jsonify({"status": "online", "pasta": OUTPUT_DIR, "pedidos_ativos": len(pedidos)})
+    return jsonify({"status": "online", "pasta": OUTPUT_DIR, "log_file": obter_caminho_log(), "pedidos_ativos": len(pedidos)})
 
 if __name__ == '__main__':
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    print("="*60)
-    print("[ROBO] DATASHEET MONOLITO ONLINE - PORTA 6004")
-    print(f"[ROBO] SALVANDO EM: {OUTPUT_DIR}")
-    print("="*60)
+    registrar_separador("=")
+    registrar_log("[ROBO] DATASHEET MONOLITO ONLINE - PORTA 6004", nivel="INFO", modulo="SISTEMA")
+    registrar_log(f"[ROBO] SALVANDO DATASHEETS EM: {OUTPUT_DIR}", nivel="INFO", modulo="SISTEMA")
+    registrar_log(f"[ROBO] SALVANDO LOG EM TEMPO REAL EM: {obter_caminho_log()}", nivel="INFO", modulo="SISTEMA")
+    registrar_separador("=")
     app.run(host='0.0.0.0', port=6004, threaded=True, debug=False)

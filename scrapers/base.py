@@ -6,11 +6,21 @@ from datetime import datetime
 from PIL import Image
 from io import BytesIO
 from utils.generator import DocGenerator
+from utils.logger import (
+    definir_contexto_execucao,
+    identificar_modulo_scraper,
+    registrar_log,
+    registrar_erro_modulo,
+    validar_e_reportar_dados_item,
+)
 
 class BaseScraper:
     def __init__(self, url):
         self.url = url
         self.output_folder = ""
+        self.site_nome = None
+        self.modulo_nome = None
+        self.problemas_detectados = []
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -84,20 +94,62 @@ class BaseScraper:
         return specs_limpas
 
     def baixar_imagem_temp(self, url_imagem):
-        if not url_imagem or not self.output_folder: return None
+        mod_id = identificar_modulo_scraper(scraper=self)
+        definir_contexto_execucao(modulo=mod_id, url=self.url)
+        if not url_imagem:
+            registrar_erro_modulo(
+                mod_id,
+                "Não foi possível baixar a imagem porque nenhuma URL de imagem foi encontrada pelo módulo.",
+                url=self.url,
+            )
+            return None
+        if not self.output_folder:
+            registrar_erro_modulo(
+                mod_id,
+                "Pasta de saída não definida ao tentar baixar a imagem do item.",
+                url=self.url,
+            )
+            return None
         try:
             if url_imagem.startswith("//"): url_imagem = "https:" + url_imagem
+            registrar_log(f"Iniciando download da imagem do produto: {url_imagem}", nivel="INFO", modulo=mod_id)
             res = requests.get(url_imagem, headers=self.headers, stream=True, timeout=10)
             if res.status_code == 200:
                 filename = os.path.join(self.output_folder, "temp_img.jpg")
                 img = Image.open(BytesIO(res.content)).convert("RGB")
+                largura, altura = img.size
                 img.save(filename, "JPEG", quality=90)
+                tamanho_kb = os.path.getsize(filename) / 1024.0 if os.path.exists(filename) else 0
+                registrar_log(
+                    f"Download da imagem concluído: {largura}x{altura}px ({tamanho_kb:.1f} KB) salva em {filename}",
+                    nivel="INFO",
+                    modulo=mod_id,
+                )
                 return filename
-        except: pass
+            else:
+                registrar_erro_modulo(
+                    mod_id,
+                    f"Falha ao baixar imagem do item (HTTP {res.status_code}) na URL de imagem: {url_imagem}",
+                    url=self.url,
+                )
+        except Exception as e:
+            registrar_erro_modulo(
+                mod_id,
+                f"Erro ao baixar ou processar a imagem do item ({url_imagem}): {e}",
+                url=self.url,
+            )
         return None
 
     def gerar_arquivos_finais(self, dados):
-        if not self.output_folder: raise Exception("Pasta de saída indefinida")
+        mod_id = identificar_modulo_scraper(scraper=self)
+        definir_contexto_execucao(modulo=mod_id, url=self.url)
+        if not self.output_folder:
+            registrar_erro_modulo(mod_id, "Pasta de saída indefinida ao gerar arquivos finais.", url=self.url)
+            raise Exception("Pasta de saída indefinida")
+
+        # Valida se o item veio sem imagem, sem descrição, sem título ou sem ficha técnica
+        # (antes de injetar a garantia padrão para não mascarar ficha técnica vazia)
+        self.problemas_detectados = validar_e_reportar_dados_item(dados, scraper=self, modulo=mod_id, url=self.url)
 
         # 1. Procurar e extrair o modelo
         modelo_encontrado = None
@@ -123,6 +175,11 @@ class BaseScraper:
                 match = re.search(r'(?i)modelo\s*[:\-]+\s*([A-Za-z0-9\-\/]+)', str(descricao))
                 if match:
                     modelo_encontrado = match.group(1).strip()
+
+        if modelo_encontrado:
+            registrar_log(f"Modelo identificado para o item: '{modelo_encontrado}'", nivel="INFO", modulo=mod_id)
+        else:
+            registrar_log("Nenhum código de modelo explícito encontrado nas especificações ou descrição.", nivel="INFO", modulo=mod_id)
                     
         # 2. Atualizar o título com o modelo
         if 'titulo' in dados and dados['titulo']:
@@ -130,6 +187,7 @@ class BaseScraper:
                 if modelo_encontrado.upper() not in str(dados['titulo']).upper():
                     dados['titulo'] = f"{str(dados['titulo']).strip()} {modelo_encontrado.upper()}"
             dados['titulo'] = str(dados['titulo']).upper()
+            registrar_log(f"Título final padronizado para o documento: '{dados['titulo']}'", nivel="INFO", modulo=mod_id)
 
         # 3. Adicionar Garantia Padronizada
         if 'caracteristicas' not in dados:
@@ -151,13 +209,22 @@ class BaseScraper:
         path_word = os.path.join(self.output_folder, nome_word)
         path_pdf = os.path.join(self.output_folder, nome_pdf)
 
+        registrar_log(f"Iniciando geração dos arquivos Word ({nome_word}) e PDF ({nome_pdf}) em {self.output_folder}...", nivel="INFO", modulo=mod_id)
         gen = DocGenerator()
-        gen.create_word(dados, path_word)
-        gen.create_pdf(dados, path_pdf)
+        ok_word = gen.create_word(dados, path_word)
+        ok_pdf = gen.create_pdf(dados, path_pdf)
+
+        if not ok_word:
+            registrar_erro_modulo(mod_id, f"Falha ao gerar arquivo Word ({path_word}).", url=self.url, titulo=dados.get('titulo'))
+        if not ok_pdf:
+            registrar_erro_modulo(mod_id, f"Falha ao gerar arquivo PDF ({path_pdf}).", url=self.url, titulo=dados.get('titulo'))
 
         if dados.get("caminho_imagem_temp") and os.path.exists(dados["caminho_imagem_temp"]):
-            try: os.remove(dados["caminho_imagem_temp"])
-            except: pass
+            try:
+                os.remove(dados["caminho_imagem_temp"])
+                registrar_log(f"Imagem temporária removida após inclusão nos documentos: {dados['caminho_imagem_temp']}", nivel="INFO", modulo=mod_id)
+            except:
+                pass
 
         return {
             'word_nome': nome_word,
