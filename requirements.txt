@@ -1,4 +1,13 @@
-Flask==2.3.3
-requests==2.31.0
+Flask==3.1.3
+requests==2.33.0
 beautifulsoup4==4.12.2
-lxml==4.9.3
+lxml==6.1.0
+# Usados pelo código, mas sem versão registrada; confirme a versão do servidor
+# com "pip freeze" antes de fixar.
+python-docx
+Pillow>=9.1
+selenium
+undetected-chromedriver
+deep-translator
+# PDF: o código importa "fpdf". Confirme no servidor se é o pacote fpdf ou fpdf2
+# (os dois usam o mesmo import) e acrescente aqui o que estiver instalado.
