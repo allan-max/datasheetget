@@ -10,6 +10,7 @@ import os
 import re
 import requests
 from .base import BaseScraper
+from utils.seguranca import nome_temporario
 
 class IngramMicroScraper(BaseScraper):
     def executar(self):
@@ -338,7 +339,7 @@ class IngramMicroScraper(BaseScraper):
             resp = s.get(url, timeout=10)
             if resp.status_code == 200:
                 ext = "jpg" if ".jpg" in url else "png"
-                filename = f"temp_img_ingram.{ext}"
+                filename = nome_temporario("temp_img_ingram", ext)
                 caminho = os.path.join(self.output_folder, filename)
                 with open(caminho, 'wb') as f:
                     f.write(resp.content)

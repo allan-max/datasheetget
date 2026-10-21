@@ -6,6 +6,7 @@ import time
 import config
 from config import identificar_site
 from urllib.parse import urlparse
+from utils.seguranca import validar_url_produto
 from utils.logger import (
     definir_contexto_execucao,
     identificar_modulo_scraper,
@@ -53,6 +54,11 @@ class ScraperManager:
                 msg_bloq = 'Site bloqueado para datasheet: ' + dominio_bloqueado
                 registrar_erro_modulo("GERENCIADOR", msg_bloq, url=url)
                 return {'sucesso': False, 'erro': msg_bloq}
+            try:
+                validar_url_produto(url)
+            except ValueError as e:
+                registrar_erro_modulo("GERENCIADOR", f"URL recusada: {e}", url=url)
+                return {'sucesso': False, 'erro': str(e)}
             site_nome, modulo_nome, classe_nome = identificar_site(url)
             
             if not site_nome:

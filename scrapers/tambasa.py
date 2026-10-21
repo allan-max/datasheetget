@@ -5,6 +5,7 @@ import os
 import re
 import time
 from .base import BaseScraper
+from utils.seguranca import nome_temporario
 
 class TambasaScraper(BaseScraper):
     def baixar_imagem_temp(self, url_imagem):
@@ -19,7 +20,7 @@ class TambasaScraper(BaseScraper):
             res = urllib.request.urlopen(req, timeout=10)
             img_data = res.read()
             
-            filename = os.path.join(self.output_folder, "temp_img.jpg")
+            filename = os.path.join(self.output_folder, nome_temporario("temp_img_tambasa"))
             img = Image.open(BytesIO(img_data)).convert("RGB")
             img.save(filename, "JPEG", quality=90)
             return filename
