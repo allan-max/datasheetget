@@ -6,6 +6,7 @@ from datetime import datetime
 from PIL import Image
 from io import BytesIO
 from utils.generator import DocGenerator
+from utils.seguranca import nome_temporario
 from utils.logger import (
     definir_contexto_execucao,
     identificar_modulo_scraper,
@@ -115,7 +116,8 @@ class BaseScraper:
             registrar_log(f"Iniciando download da imagem do produto: {url_imagem}", nivel="INFO", modulo=mod_id)
             res = requests.get(url_imagem, headers=self.headers, stream=True, timeout=10)
             if res.status_code == 200:
-                filename = os.path.join(self.output_folder, "temp_img.jpg")
+                # Nome único: com nome fixo, pedidos simultâneos trocavam a foto um do outro
+                filename = os.path.join(self.output_folder, nome_temporario("temp_img"))
                 img = Image.open(BytesIO(res.content)).convert("RGB")
                 largura, altura = img.size
                 img.save(filename, "JPEG", quality=90)
@@ -200,7 +202,9 @@ class BaseScraper:
             dados['caracteristicas'] = [item for item in dados['caracteristicas'] if not (isinstance(item, (list, tuple)) and len(item) == 2 and str(item[0]).strip().lower() == 'garantia')]
             dados['caracteristicas'].append(('Garantia', '12 MESES'))
 
-        safe_title = re.sub(r'(?u)[^-\w.]', '', dados['titulo'].replace(' ', '_'))[:100]
+        if not dados.get('titulo'):
+            dados['titulo'] = 'PRODUTO'
+        safe_title = re.sub(r'(?u)[^-\w.]', '', str(dados['titulo']).replace(' ', '_'))[:100]
         timestamp = datetime.now().strftime("%H%M%S")
         
         nome_word = f"{safe_title}_{timestamp}.docx"

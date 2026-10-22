@@ -157,8 +157,9 @@ class VonderScraper(BaseScraper):
     def baixar_imagem_validada(self, url):
         """Baixa e verifica se o arquivo é realmente uma imagem"""
         
-        # Nome simples na pasta atual (evita problemas de path complexo)
-        filename = f"vonder_img_temp.jpg"
+        # Nome único na pasta atual (evita problemas de path complexo); com nome fixo,
+        # dois pedidos Vonder ao mesmo tempo trocavam a foto um do outro
+        filename = f"vonder_img_temp_{uuid.uuid4().hex}.jpg"
         filepath = os.path.abspath(filename)
         
         # 1. Tenta Python Unsafe
@@ -174,6 +175,9 @@ class VonderScraper(BaseScraper):
             return path_sys
             
         print("   [DEBUG] Todas as tentativas falharam ou geraram arquivos inválidos.")
+        try:
+            if os.path.exists(filepath): os.remove(filepath)
+        except OSError: pass
         return None
 
     def eh_imagem_valida(self, filepath):

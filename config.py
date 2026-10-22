@@ -1,6 +1,7 @@
 # config.py
 import re
 from urllib.parse import urlparse
+from utils.seguranca import host_da_url
 
 UNIVERSAL_ATIVO = True
 
@@ -328,11 +329,15 @@ def identificar_site(url):
     """
     Verifica se a URL pertence a algum site configurado.
     Retorna: (Nome do Site, Nome do Modulo, Nome da Classe)
+    Compara só o domínio: "?ref=kabum.com.br" no caminho não escolhe o adapter.
     """
+    host = host_da_url(url)
+    if not host:
+        return None, None, None
     for site_nome, config in SITES_CONFIG.items():
         for padrao in config['padroes_url']:
-            # Verifica se o padrão existe na URL (Ignora maiúsculas/minúsculas)
-            if re.search(padrao, url, re.IGNORECASE):
+            # O padrão precisa começar no início do domínio ou depois de um ponto
+            if re.search(r'(?:^|\.)' + padrao, host, re.IGNORECASE):
                 return site_nome, config['modulo'], config['classe']
     
     return None, None, None

@@ -10,6 +10,7 @@ import requests
 import json
 from datetime import datetime
 from scraper_manager import ScraperManager
+from utils.seguranca import token_valido, webhook_permitido
 from utils.logger import (
     ativar_captura_global,
     definir_contexto_execucao,
@@ -68,6 +69,48 @@ URL_CALLBACK_API_NOVA = "http://127.0.0.1:3000/api/datasheet/webhook"
 
 scraper_manager = ScraperManager()
 pedidos = {}
+LIMITE_PEDIDOS_GUARDADOS = 1000
+
+
+def guardar_pedido(req_id, dados_pedido):
+    # Mantém só os pedidos mais recentes; os em andamento nunca são descartados.
+    pedidos[req_id] = dados_pedido
+    excesso = len(pedidos) - LIMITE_PEDIDOS_GUARDADOS
+    if excesso > 0:
+        for antigo in [k for k, v in list(pedidos.items()) if v.get('status') != 'processando'][:excesso]:
+            pedidos.pop(antigo, None)
+
+
+def enviar_webhook(webhook_url, payload_final, id_final_para_bot, url):
+    registrar_log(
+        f"Enviando retorno para Webhook: {webhook_url} | Payload: {json.dumps(payload_final, ensure_ascii=False)}",
+        nivel="INFO",
+        modulo="WEBHOOK",
+    )
+    try:
+        resp_wh = requests.post(webhook_url, json=payload_final, timeout=10)
+        registrar_log(f"Webhook respondeu HTTP {resp_wh.status_code} para ID {id_final_para_bot}", nivel="INFO", modulo="WEBHOOK")
+    except Exception as e:
+        registrar_erro_modulo("WEBHOOK", f"Erro ao enviar callback para Webhook ({webhook_url}): {e}", url=url)
+
+
+def payload_erro(origem, codigo_tarefa_externo, id_final_para_bot, msg_erro):
+    if origem == "API_NOVA":
+        return {
+            "codigoTarefa": codigo_tarefa_externo,
+            "status": "ERRO",
+            "sucesso": False,
+            "erro": msg_erro
+        }
+    return {
+        "status": "Erro",
+        # Devolvemos o ID mesmo no erro
+        "request_id": id_final_para_bot,
+        "custom_id": id_final_para_bot,
+        "id": id_final_para_bot,
+
+        "mensagem": msg_erro
+    }
 
 def processar_pedido_background(request_id_interno, url, webhook_url, origem="PADRAO", codigo_tarefa_externo=None, custom_id=None):
     inicio_pedido = time.time()
@@ -132,23 +175,7 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
             msg_erro = resultado.get('erro', 'Erro desconhecido')
             registrar_erro_modulo("API", f"Pedido {id_final_para_bot} falhou após {duracao_total:.2f}s: {msg_erro}", url=url)
 
-            if origem == "API_NOVA":
-                payload_final = {
-                    "codigoTarefa": codigo_tarefa_externo,
-                    "status": "ERRO",
-                    "sucesso": False,
-                    "erro": msg_erro
-                }
-            else:
-                payload_final = {
-                    "status": "Erro",
-                    # Devolvemos o ID mesmo no erro
-                    "request_id": id_final_para_bot,
-                    "custom_id": id_final_para_bot,
-                    "id": id_final_para_bot,
-                    
-                    "mensagem": msg_erro
-                }
+            payload_final = payload_erro(origem, codigo_tarefa_externo, id_final_para_bot, msg_erro)
 
         # Atualiza status interno
         pedidos[request_id_interno]['resultado'] = payload_final
@@ -156,16 +183,7 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
 
         # --- ENVIO DO WEBHOOK ---
         if webhook_url:
-            registrar_log(
-                f"Enviando retorno para Webhook: {webhook_url} | Payload: {json.dumps(payload_final, ensure_ascii=False)}",
-                nivel="INFO",
-                modulo="WEBHOOK",
-            )
-            try:
-                resp_wh = requests.post(webhook_url, json=payload_final, timeout=10)
-                registrar_log(f"Webhook respondeu HTTP {resp_wh.status_code} para ID {id_final_para_bot}", nivel="INFO", modulo="WEBHOOK")
-            except Exception as e:
-                registrar_erro_modulo("WEBHOOK", f"Erro ao enviar callback para Webhook ({webhook_url}): {e}", url=url)
+            enviar_webhook(webhook_url, payload_final, id_final_para_bot, url)
 
         registrar_log(
             f"FIM DE EXECUÇÃO DO PEDIDO {id_final_para_bot} | Status: {pedidos[request_id_interno]['status'].upper()} | Tempo Total: {duracao_total:.2f}s",
@@ -176,7 +194,12 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
 
     except Exception as e:
         registrar_erro_modulo("API_THREAD", f"Erro crítico na thread de processamento: {str(e)}", url=url, incluir_traceback=True)
+        # Sem isto o pedido ficava sem resultado e o bot nunca recebia retorno.
+        payload_final = payload_erro(origem, codigo_tarefa_externo, id_final_para_bot, f"Erro interno: {e}")
+        pedidos[request_id_interno]['resultado'] = payload_final
         pedidos[request_id_interno]['status'] = 'erro_critico'
+        if webhook_url:
+            enviar_webhook(webhook_url, payload_final, id_final_para_bot, url)
     finally:
         limpar_contexto_execucao()
 
@@ -186,12 +209,15 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
 def iniciar_scraping():
     ip_cliente = request.remote_addr or "desconhecido"
     registrar_log(f"Nova requisição HTTP POST recebida em /api/datasheet/processar (IP: {ip_cliente})", nivel="INFO", modulo="API")
+    if not token_valido(request.headers):
+        registrar_erro_modulo("API", f"Requisição de {ip_cliente} recusada: token ausente ou inválido.")
+        return jsonify({"error": "Não autorizado"}), 401
     
     # force=True ignora caso o bot do Node.js esqueça o header Content-Type
     # silent=True evita que o Flask quebre a aplicação se o JSON vier malformado
     dados = request.get_json(silent=True, force=True)
     
-    if not dados:
+    if not dados or not isinstance(dados, dict):
         registrar_erro_modulo("API", f"Requisição de {ip_cliente} recebida sem corpo JSON ou com JSON inválido.")
         return jsonify({"error": "Nenhuma URL fornecida ou JSON inválido"}), 400
 
@@ -202,7 +228,7 @@ def iniciar_scraping():
     # 1. API NOVA
     if 'codigoTarefa' in dados:
         codigo_tarefa = dados.get('codigoTarefa')
-        bloco_dados = dados.get('dados', {})
+        bloco_dados = dados.get('dados') if isinstance(dados.get('dados'), dict) else {}
         url = bloco_dados.get('url')
         
         # Puxa o webhook que o bot mandou, se não tiver, usa o padrão
@@ -219,7 +245,13 @@ def iniciar_scraping():
             
     # 2. PADRÃO (SEU BOT)
     else:
-        urls_entrada = dados.get('urls', [])
+        urls_entrada = dados.get('urls') or []
+        if isinstance(urls_entrada, str):
+            urls_entrada = [urls_entrada]
+        elif not isinstance(urls_entrada, list):
+            urls_entrada = []
+        else:
+            urls_entrada = list(urls_entrada)
         url_unica = dados.get('url') or dados.get('link')
         webhook_entrada = dados.get('webhook_url')
         
@@ -234,6 +266,8 @@ def iniciar_scraping():
         if url_unica: urls_entrada.append(url_unica)
             
         for u in urls_entrada:
+            if not isinstance(u, str) or not u.strip():
+                continue
             lista_processamento.append({
                 "url": u,
                 "webhook": webhook_entrada,
@@ -246,18 +280,23 @@ def iniciar_scraping():
         registrar_erro_modulo("API", f"JSON recebido sem nenhuma URL válida: {dados}")
         return jsonify({"error": "Nenhuma URL fornecida no corpo da requisição"}), 400
 
+    for item in lista_processamento:
+        if item['webhook'] and not webhook_permitido(item['webhook']):
+            registrar_erro_modulo("API", f"Webhook recusado: {item['webhook']}")
+            return jsonify({"error": "webhook_url inválido ou não permitido"}), 400
+
     ids_gerados = []
     
     for item in lista_processamento:
         request_id_interno = str(uuid.uuid4())
         
-        pedidos[request_id_interno] = {
+        guardar_pedido(request_id_interno, {
             'url': item['url'],
             'status': 'processando',
             'origem': item['origem'],
             'custom_id': item['custom_id'],
             'criado_em': datetime.now().isoformat()
-        }
+        })
 
         thread = threading.Thread(
             target=processar_pedido_background,
@@ -283,6 +322,8 @@ def iniciar_scraping():
 
 @app.route('/api/status/<request_id>', methods=['GET'])
 def verificar_status(request_id):
+    if not token_valido(request.headers):
+        return jsonify({"success": False, "message": "Não autorizado"}), 401
     if request_id not in pedidos:
         return jsonify({"success": False, "message": "ID não encontrado"}), 404
     
@@ -307,7 +348,7 @@ def health_check():
         "status": "online",
         "pasta": OUTPUT_DIR,
         "log_file": obter_caminho_log(),
-        "pedidos_ativos": sum(1 for p in pedidos.values() if p['status'] == 'processando')
+        "pedidos_ativos": sum(1 for p in list(pedidos.values()) if p['status'] == 'processando')
     })
 
 if __name__ == '__main__':
