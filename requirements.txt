@@ -1,3 +1,6 @@
+# Servidor: Windows Server 2012 R2, Python 3.13 (C:\Users\Administrator\...\Python313)
+# e Chrome 109, a ultima versao para esse Windows (version_main=109 nos scrapers).
+# Teste numa venv do servidor antes de trocar as versoes instaladas.
 Flask==3.1.3
 requests==2.33.0
 beautifulsoup4==4.12.2
@@ -8,6 +11,9 @@ python-docx
 Pillow>=9.1
 selenium
 undetected-chromedriver
+# O undetected-chromedriver importa distutils, que saiu do Python 3.12+;
+# o setuptools devolve esse modulo (sem ele: "No module named 'distutils'").
+setuptools
 deep-translator
 # PDF: o código importa "fpdf". Confirme no servidor se é o pacote fpdf ou fpdf2
 # (os dois usam o mesmo import) e acrescente aqui o que estiver instalado.
