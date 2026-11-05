@@ -366,10 +366,14 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem, co
     except Exception as e:
         registrar_erro_modulo("API_THREAD", f"Erro crítico no processamento em background: {e}", url=url, incluir_traceback=True)
         # Sem isto o pedido ficava 'processando' para sempre e o bot nunca recebia retorno.
+        pedido = pedidos.get(request_id_interno)
+        if pedido is None or pedido.get('status') != 'processando':
+            # O resultado (e o webhook) ja saiu; nao manda um segundo retorno ao bot.
+            return
         payload = {"status": "ERRO", "sucesso": False, "request_id": id_bot,
                    "codigoTarefa": codigo_tarefa, "erro": f"Erro interno: {e}"}
-        pedidos[request_id_interno]['resultado'] = payload
-        pedidos[request_id_interno]['status'] = 'erro_critico'
+        pedido['resultado'] = payload
+        pedido['status'] = 'erro_critico'
         if webhook_url:
             enviar_webhook(webhook_url, payload, id_bot, url)
     finally:

@@ -142,6 +142,22 @@ class ThreadDeProcessamentoTest(unittest.TestCase):
         self.assertEqual(wh.call_args.args[1], {"codigoTarefa": "T3", "status": "ERRO", "sucesso": False,
                                                  "erro": "Erro interno: quebrou"})
 
+    def test_api_excecao_depois_do_webhook_nao_manda_segundo_retorno(self):
+        api = carregar_api()
+
+        def log_que_quebra_no_fim(msg, *a, **k):
+            if msg.startswith("FIM DE"):
+                raise RuntimeError("log quebrou")
+
+        sucesso = {"sucesso": True, "arquivos": {}}
+        with patch.object(api.scraper_manager, "executar_scraping", return_value=sucesso), \
+                patch.object(api, "registrar_log", side_effect=log_que_quebra_no_fim), \
+                patch.object(api, "enviar_webhook") as wh:
+            api.pedidos["d"] = {"status": "processando"}
+            api.processar_pedido_background("d", "https://x.example/p", "http://127.0.0.1:3000/w", "API_NOVA", "T4")
+        self.assertEqual(wh.call_count, 1)
+        self.assertEqual(api.pedidos["d"]["status"], "concluido")
+
     def test_lista_de_pedidos_nao_cresce_sem_limite(self):
         with patch.object(run, "LIMITE_PEDIDOS_GUARDADOS", 3), patch.dict(run.pedidos, clear=True):
             run.guardar_pedido("ativo", {"status": "processando"})
