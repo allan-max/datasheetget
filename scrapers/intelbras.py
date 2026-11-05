@@ -9,6 +9,7 @@ import os
 import re
 import requests
 from .base import BaseScraper
+from utils.seguranca import nome_temporario
 
 try:
     import fitz  # PyMuPDF
@@ -73,7 +74,7 @@ class IntelbrasScraper(BaseScraper):
                     xref_img = max(images, key=lambda x: x[2] * x[3])[0]
                     base_img = doc.extract_image(xref_img)
                     if base_img["width"] > 100: # Filtra ícones pequenos
-                        filename = f"temp_img_intelbras_pdf.{base_img['ext']}"
+                        filename = nome_temporario("temp_img_intelbras_pdf", base_img['ext'])
                         caminho_imagem = os.path.join(self.pasta_saida, filename)
                         with open(caminho_imagem, "wb") as f:
                             f.write(base_img["image"])
@@ -193,7 +194,7 @@ class IntelbrasScraper(BaseScraper):
                     el_img = imgs[0] if imgs else None
 
                 if el_img:
-                    filename = "temp_img_intelbras.png"
+                    filename = nome_temporario("temp_img_intelbras", "png")
                     caminho_imagem = os.path.join(self.pasta_saida, filename)
                     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el_img)
                     time.sleep(1)
