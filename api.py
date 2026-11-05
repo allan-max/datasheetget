@@ -10,6 +10,8 @@ import requests
 import json
 from datetime import datetime
 from scraper_manager import ScraperManager
+from config import identificar_site
+from utils import issues
 from utils.seguranca import token_valido, webhook_permitido
 from utils.logger import (
     ativar_captura_global,
@@ -176,6 +178,7 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
             registrar_erro_modulo("API", f"Pedido {id_final_para_bot} falhou após {duracao_total:.2f}s: {msg_erro}", url=url)
 
             payload_final = payload_erro(origem, codigo_tarefa_externo, id_final_para_bot, msg_erro)
+            issues.em_fundo(url, msg_erro, identificar_site(url)[0], OUTPUT_DIR)
 
         # Atualiza status interno
         pedidos[request_id_interno]['resultado'] = payload_final
@@ -194,6 +197,7 @@ def processar_pedido_background(request_id_interno, url, webhook_url, origem="PA
 
     except Exception as e:
         registrar_erro_modulo("API_THREAD", f"Erro crítico na thread de processamento: {str(e)}", url=url, incluir_traceback=True)
+        issues.em_fundo(url, f"{type(e).__name__}: {e}", "API", OUTPUT_DIR, exc=e)
         # Sem isto o pedido ficava sem resultado e o bot nunca recebia retorno.
         pedido = pedidos.get(request_id_interno)
         if pedido is None or pedido.get('status') != 'processando':

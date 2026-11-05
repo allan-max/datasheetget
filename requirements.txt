@@ -17,3 +17,5 @@ setuptools
 deep-translator
 # PDF: o código importa "fpdf". Confirme no servidor se é o pacote fpdf ou fpdf2
 # (os dois usam o mesmo import) e acrescente aqui o que estiver instalado.
+# IA que explica o erro na issue do GitHub (utils/issues.py); sem ele a issue sai sem explicacao.
+anthropic
