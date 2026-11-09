@@ -4,6 +4,7 @@ import unittest
 from config import identificar_site, site_bloqueado
 from scrapers.compragolden import CompraGoldenScraper
 from scrapers.eaton import EatonScraper
+from scrapers.gedore import GedoreScraper
 from scrapers.magalu import MagaluScraper
 from scrapers.marchesoni import MarchesoniScraper
 from scrapers.projetelas import ProjetelasScraper
@@ -20,6 +21,7 @@ class AdaptersNovosTest(unittest.TestCase):
             ("terabyteshop.com.br", "terabyteshop"),
             ("compregolden.com.br", "compragolden"),
             ("belmicro.com.br", "belmicro"),
+            ("catalogo.gedore.com.br", "gedore"),
         ):
             url = "https://www." + dominio + "/produto"
             self.assertEqual(identificar_site(url)[1], modulo)
@@ -34,6 +36,21 @@ class AdaptersNovosTest(unittest.TestCase):
     def test_magalu_bloqueio(self):
         scraper = MagaluScraper("https://www.magazineluiza.com.br/p/1")
         self.assertTrue(scraper.bloqueada('<div id="sec-if-cpt-container"></div>', 200))
+        self.assertTrue(scraper.bloqueada('<p>Não é possível acessar a página</p><p>(Erro 403)</p>', 200))
+        self.assertFalse(scraper.bloqueada('<h1 data-testid="heading">Fita Brady</h1>', 200))
+
+    def test_gedore(self):
+        html = ('<div id="banner"><div class="group-title"><span class="code">código 012.304</span>'
+                '<span class="title">Jogo de Chave L</span></div><div class="subtitle">Jogo de Chave L com 14 peças mm</div></div>'
+                '<div id="main-info"><div class="left-box"><a class="fancybox" href="https://gedore.com.br/foto.jpg"></a></div>'
+                '<div class="right-box"><div class="text"><p>Respeite as normas profissionais de segurança e o uso dos EPIs.</p></div></div></div>'
+                '<div id="other-info"><ul class="content"><li class="info"><table><thead><tr><th>*</th><th>Código</th><th>Referência</th><th><img src="x.png"></th></tr></thead>'
+                '<tbody><tr><td></td><td>012.301</td><td>42 L - 7M</td><td>0,2</td></tr><tr class="highlighted"><td>*</td><td>012.304</td><td>42 L - 14M</td><td>1,6</td></tr></tbody></table></li>'
+                '<li class="composition"><table><tbody><tr><td>012.201</td><td>42 L - 2 mm</td><td></td><td>Chave L</td><td>1</td></tr></tbody></table></li></ul></div>')
+        t, d, s, i, _ = GedoreScraper("https://catalogo.gedore.com.br/p").extrair_html(html, "")
+        self.assertEqual((t, s["Código"], s["Referência"], s["Composição - 42 L - 2 mm"], i),
+                         ("Jogo de Chave L", "012.304", "42 L - 14M", "1 x Chave L", "https://gedore.com.br/foto.jpg"))
+        self.assertIn("EPIs", d)
 
     def test_terabyteshop(self):
         html = '<h1>SSD Kingston NV3</h1><script type="application/ld+json">{"@type":"Product","description":"SSD NV3 para computadores com interface PCIe 4.0 e capacidade de 1TB. Aproveite na Terabyte!","image":"https://img.terabyteshop.com.br/produto/g/ssd.jpg"}</script><div class="especificacoes"><div class="tecnicas"><p>Modelo: NV3</p><p>Capacidade: 1TB</p></div></div>'

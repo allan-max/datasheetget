@@ -322,6 +322,11 @@ SITES_CONFIG = {
         'padroes_url': [r'weg\.net'],
         'modulo': 'weg',
         'classe': 'WegScraper'
+    },
+    'GEDORE': {
+        'padroes_url': [r'catalogo\.gedore\.com\.br'],
+        'modulo': 'gedore',
+        'classe': 'GedoreScraper'
     }
 }
 
