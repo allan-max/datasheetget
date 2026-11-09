@@ -27,6 +27,20 @@ class BradyidScraper(BaseScraper):
             print(f"   ⚠️ Erro ao traduzir: {e}")
             return texto
 
+    def traduzir_lista(self, textos):
+        """Traduz várias linhas num só pedido (o Google bloqueia o IP com 1 pedido por spec)."""
+        traduzidos, bloco = [], []
+        for texto in textos + [None]:
+            # Lote até ~4500 caracteres (limite do tradutor: 5000)
+            if bloco and (texto is None or len("\n".join(bloco + [texto])) > 4500):
+                resultado = self.traduzir("\n".join(bloco)).split("\n")
+                # Se o Google juntou/partiu linhas, fica o original em inglês
+                traduzidos += [r.strip() for r in resultado] if len(resultado) == len(bloco) else bloco
+                bloco = []
+            if texto is not None:
+                bloco.append(texto)
+        return traduzidos
+
     def executar(self):
         driver = None
         try:
@@ -107,6 +121,7 @@ class BradyidScraper(BaseScraper):
             # --- CARACTERÍSTICAS TÉCNICAS ---
             print("   [BradyID] A extrair e traduzir Ficha Técnica...")
             specs = {}
+            pares_en = []
             try:
                 tabelas = soup.find_all('table', class_=re.compile(r'BR-Table'))
                 for tabela in tabelas:
@@ -123,10 +138,12 @@ class BradyidScraper(BaseScraper):
                             valor_en = self.limpar_texto(td.get_text(separator=" ", strip=True))
                             
                             if chave_en and valor_en:
-                                # Traduz a chave e o valor em tempo real
-                                chave_pt = self.traduzir(chave_en)
-                                valor_pt = self.traduzir(valor_en)
-                                specs[chave_pt] = valor_pt
+                                pares_en.append((chave_en, valor_en))
+
+                # Traduz todas as chaves e valores de uma vez
+                linhas_pt = self.traduzir_lista([t for par in pares_en for t in par])
+                for i in range(0, len(linhas_pt) - 1, 2):
+                    specs[linhas_pt[i]] = linhas_pt[i + 1]
 
                 if hasattr(self, 'filtrar_specs'):
                     specs = self.filtrar_specs(specs)

@@ -2,6 +2,7 @@ import json
 import unittest
 
 from config import identificar_site, site_bloqueado
+from scrapers.bradyid import BradyidScraper
 from scrapers.compragolden import CompraGoldenScraper
 from scrapers.eaton import EatonScraper
 from scrapers.gedore import GedoreScraper
@@ -38,6 +39,15 @@ class AdaptersNovosTest(unittest.TestCase):
         self.assertTrue(scraper.bloqueada('<div id="sec-if-cpt-container"></div>', 200))
         self.assertTrue(scraper.bloqueada('<p>Não é possível acessar a página</p><p>(Erro 403)</p>', 200))
         self.assertFalse(scraper.bloqueada('<h1 data-testid="heading">Fita Brady</h1>', 200))
+
+    def test_bradyid_traduz_specs_num_pedido(self):
+        scraper, pedidos = BradyidScraper("https://www.bradyid.com/p"), []
+        scraper.traduzir = lambda t: pedidos.append(t) or "\n".join("PT:" + l for l in t.split("\n"))
+        self.assertEqual(scraper.traduzir_lista(["Color", "Yellow", "Width", "4 in"]),
+                         ["PT:Color", "PT:Yellow", "PT:Width", "PT:4 in"])
+        self.assertEqual(len(pedidos), 1)
+        scraper.traduzir = lambda t: t.replace("\n", " ")  # Google juntou as linhas: fica o inglês
+        self.assertEqual(scraper.traduzir_lista(["Color", "Yellow"]), ["Color", "Yellow"])
 
     def test_gedore(self):
         html = ('<div id="banner"><div class="group-title"><span class="code">código 012.304</span>'
