@@ -19,7 +19,9 @@ except ImportError:
 class IntelbrasScraper(BaseScraper):
     def executar(self):
         # Detecta se é PDF pela extensão ou cabeçalho content-type se necessário
-        if self.url.lower().endswith('.pdf'):
+        # A API backend.intelbras.com/api/product/<id>/datasheet devolve PDF sem ".pdf" no link
+        caminho = self.url.lower().split('?')[0].rstrip('/')
+        if caminho.endswith('.pdf') or caminho.endswith('/datasheet'):
             if not fitz:
                 return {'sucesso': False, 'erro': "Instale o PyMuPDF: pip install pymupdf"}
             return self.processar_pdf()
@@ -36,10 +38,14 @@ class IntelbrasScraper(BaseScraper):
             if not hasattr(self, 'pasta_saida'): self.pasta_saida = "output"
             if not os.path.exists(self.pasta_saida): os.makedirs(self.pasta_saida)
             
-            response = requests.get(self.url, timeout=30)
+            response = requests.get(self.url, headers=self.headers, timeout=30)  # sem User-Agent dá 403
             if response.status_code != 200:
                 raise Exception(f"Erro HTTP {response.status_code}")
             
+            if not response.content.startswith(b"%PDF"):
+                # Cloudflare devolve "Just a moment..." em HTML com status 200
+                raise Exception("Datasheet não veio em PDF (bloqueio ou página de desafio)")
+
             doc = fitz.open(stream=response.content, filetype="pdf")
             page1 = doc[0]
 
@@ -58,6 +64,14 @@ class IntelbrasScraper(BaseScraper):
                                     max_size = s["size"]
                                     titulo = txt
             
+            # Datasheet novo: nome no topo da página + modelo nos metadados ("Datasheet  MFD 2020 D").
+            # O maior texto é a categoria ("Fechaduras"), por isso só fica como reserva.
+            modelo = self.limpar_texto(re.sub(r'(?i)datasheet', '', doc.metadata.get('title') or ''))
+            nome = " ".join(s["text"].strip() for b in blocks for l in b.get("lines", []) for s in l["spans"]
+                            if s["bbox"][1] < 80 and s["size"] >= 12 and s["text"].strip())
+            if modelo and nome:
+                titulo = f"{self.limpar_texto(nome)} {modelo}"
+
             # Fallback se o título ficou genérico
             if titulo == "Produto Intelbras PDF":
                 # Tenta pegar o nome do arquivo limpo
@@ -69,15 +83,25 @@ class IntelbrasScraper(BaseScraper):
             caminho_imagem = None
             try:
                 images = page1.get_images(full=True)
+                # get_images também lista as máscaras de transparência (smask, campo [1] da foto);
+                # a maior delas era escolhida e saía uma silhueta branca em fundo preto
+                mascaras = {img[1] for img in images if img[1]}
+                images = [img for img in images if img[0] not in mascaras and page1.get_image_rects(img[0])]
                 if images:
                     # Pega a imagem com maior área (largura x altura)
                     xref_img = max(images, key=lambda x: x[2] * x[3])[0]
                     base_img = doc.extract_image(xref_img)
                     if base_img["width"] > 100: # Filtra ícones pequenos
-                        filename = nome_temporario("temp_img_intelbras_pdf", base_img['ext'])
+                        filename = nome_temporario("temp_img_intelbras_pdf", "png")
                         caminho_imagem = os.path.join(self.pasta_saida, filename)
-                        with open(caminho_imagem, "wb") as f:
-                            f.write(base_img["image"])
+                        # Desenha a área da imagem na página: extract_image devolvia só a máscara
+                        # de transparência (silhueta branca em fundo preto) nos PNG com alfa
+                        area = page1.get_image_rects(xref_img)
+                        if area:
+                            page1.get_pixmap(clip=area[0], dpi=200).save(caminho_imagem)
+                        else:
+                            with open(caminho_imagem, "wb") as f:
+                                f.write(base_img["image"])
                         print(f"   ✅ Imagem extraída: {filename}")
             except: pass
 
@@ -112,12 +136,15 @@ class IntelbrasScraper(BaseScraper):
                         v = self.limpar_texto(parts[-1]) # Pega o último pedaço como valor
                         
                         # Validação para não pegar lixo
-                        if 2 < len(k) < 60 and len(v) > 0:
+                        # "•" = bullet do cabeçalho; "Suporte" = rodapé de contactos
+                        if 2 < len(k) < 60 and len(v) > 0 and not v.startswith("•") and not k.lower().startswith("suporte"):
                             if "garantia" not in k.lower() and "especificações" not in k.lower():
                                 specs[k] = v
 
             # Descrição: Pega os primeiros parágrafos limpos
-            desc_lines = [l for l in full_text.splitlines() if len(l) > 50][:10]
+            # Só linhas de uma coluna: as de layout ("Cor          Preta") são specs, não texto
+            desc_lines = [self.limpar_texto(l) for l in full_text.splitlines()
+                          if len(l.strip()) > 50 and not re.search(r'\S {3,}\S', l.strip())][:10]
             descricao = "\n".join(desc_lines) if desc_lines else "Descrição extraída do datasheet técnico."
 
             print(f"   ✅ Specs PDF encontradas: {len(specs)} itens.")
@@ -162,7 +189,7 @@ class IntelbrasScraper(BaseScraper):
             options.add_argument("--disable-http2")
             options.add_argument("--window-size=1920,1080")
 
-            driver = uc.Chrome(options=options, version_main=144)
+            driver = uc.Chrome(options=options, version_main=109)  # 144 dava WinError 193 no Windows Server 2012 R2
             
             print(f"   [Intelbras] Acessando: {self.url}")
             driver.set_page_load_timeout(30)
