@@ -8,6 +8,11 @@ class MagaluScraper(UniversalScraper):
     exigir_imagem = True
     espera_css = 'h1[data-testid="heading"]'
 
+    def bloqueada(self, html, status=200):
+        # Página de erro 403 do Magalu ("Não é possível acessar a página") não era vista como bloqueio
+        h = (html or "").lower()
+        return super().bloqueada(html, status) or "possível acessar a página" in h or "possivel acessar a pagina" in h
+
     def extrair_html(self, html, url):
         """Usa apenas dados da pagina real, nunca o titulo de bloqueio Akamai."""
         titulo, descricao, specs, imagem, fonte = super().extrair_html(html, url)
