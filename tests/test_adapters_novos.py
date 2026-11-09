@@ -49,6 +49,17 @@ class AdaptersNovosTest(unittest.TestCase):
         scraper.traduzir = lambda t: t.replace("\n", " ")  # Google juntou as linhas: fica o inglês
         self.assertEqual(scraper.traduzir_lista(["Color", "Yellow"]), ["Color", "Yellow"])
 
+    def test_intelbras_api_datasheet_vai_para_pdf(self):
+        from scrapers import intelbras
+        for url, esperado in (("https://backend.intelbras.com/api/product/34700/datasheet", "pdf"),
+                              ("https://backend.intelbras.com/api/product/34700/datasheet/?v=1", "pdf"),
+                              ("https://www.intelbras.com/pt-br/fechadura-mfd-2020-d", "html")):
+            scraper = intelbras.IntelbrasScraper(url)
+            scraper.processar_pdf, scraper.processar_html = (lambda: "pdf"), (lambda: "html")
+            if intelbras.fitz is None and esperado == "pdf":
+                continue  # sem PyMuPDF a rota devolve o erro "Instale o PyMuPDF"
+            self.assertEqual(scraper.executar(), esperado, url)
+
     def test_gedore(self):
         html = ('<div id="banner"><div class="group-title"><span class="code">código 012.304</span>'
                 '<span class="title">Jogo de Chave L</span></div><div class="subtitle">Jogo de Chave L com 14 peças mm</div></div>'
