@@ -1,3 +1,5 @@
+import re
+
 from bs4 import BeautifulSoup
 
 from .universal import UniversalScraper
@@ -23,8 +25,11 @@ class TerabyteShopScraper(UniversalScraper):
         h1 = soup.find("h1")
         titulo = self.limpar_texto(h1.get_text(" ", strip=True)) if h1 else ""
         descricao = self.limpar_descricao(produto.get("description"))
-        descricao = "\n".join(linha for linha in descricao.splitlines()
-                              if not linha.lower().startswith(("aproveite", "compre")))
+        # limpar_descricao junta as frases do paragrafo; o convite da loja sai por frase.
+        descricao = "\n".join(" ".join(f for f in re.split(r"(?<=[.!?])\s+", linha)
+                                       if not f.lower().startswith(("aproveite", "compre", "garanta")))
+                              for linha in descricao.splitlines())
+        descricao = "\n".join(l for l in descricao.splitlines() if l.strip())
         imagem = produto.get("image") or ""
         if isinstance(imagem, list):
             imagem = imagem[0] if imagem else ""
